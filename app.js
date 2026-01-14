@@ -177,42 +177,68 @@ async function handlePdfUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
     
-    const arrayBuffer = await file.arrayBuffer();
-    currentPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    currentPageNum = 1;
-    highlights = [];
-    await renderPage(currentPageNum);
+    const viewer = document.getElementById('pdf-viewer');
+    if (!viewer) return;
+    
+    viewer.innerHTML = '<div style="text-align: center; padding: 100px; color: #999;">PDF 로딩 중...</div>';
+    
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        currentPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        currentPageNum = 1;
+        highlights = [];
+        await renderPage(currentPageNum);
+    } catch (error) {
+        console.error('PDF 로딩 오류:', error);
+        viewer.innerHTML = `<div style="text-align: center; padding: 100px; color: red;">PDF 로딩 오류: ${error.message}</div>`;
+    }
 }
 
 // PDF 페이지 렌더링
 async function renderPage(pageNum) {
-    if (!currentPdfDoc) return;
-    
-    currentPage = await currentPdfDoc.getPage(pageNum);
-    currentViewport = currentPage.getViewport({ scale: 1.5 });
-    
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.height = currentViewport.height;
-    canvas.width = currentViewport.width;
+    if (!currentPdfDoc) {
+        console.error('PDF 문서가 없습니다');
+        return;
+    }
     
     const viewer = document.getElementById('pdf-viewer');
-    viewer.innerHTML = '';
-    viewer.style.position = 'relative';
-    viewer.appendChild(canvas);
+    if (!viewer) {
+        console.error('PDF 뷰어 요소를 찾을 수 없습니다');
+        return;
+    }
     
-    await currentPage.render({
-        canvasContext: context,
-        viewport: currentViewport
-    }).promise;
-    
-    document.getElementById('page-info').textContent = `페이지: ${pageNum} / ${currentPdfDoc.numPages}`;
-    
-    // 클릭 이벤트 추가
-    setupPdfInteraction(canvas);
-    
-    // 기존 하이라이트 다시 그리기
-    setTimeout(() => renderHighlights(), 100);
+    try {
+        currentPage = await currentPdfDoc.getPage(pageNum);
+        currentViewport = currentPage.getViewport({ scale: 1.5 });
+        
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = currentViewport.height;
+        canvas.width = currentViewport.width;
+        
+        viewer.innerHTML = '';
+        viewer.style.position = 'relative';
+        viewer.appendChild(canvas);
+        
+        await currentPage.render({
+            canvasContext: context,
+            viewport: currentViewport
+        }).promise;
+        
+        const pageInfo = document.getElementById('page-info');
+        if (pageInfo) {
+            pageInfo.textContent = `페이지: ${pageNum} / ${currentPdfDoc.numPages}`;
+        }
+        
+        // 클릭 이벤트 추가
+        setupPdfInteraction(canvas);
+        
+        // 기존 하이라이트 다시 그리기
+        setTimeout(() => renderHighlights(), 100);
+    } catch (error) {
+        console.error('PDF 렌더링 오류:', error);
+        viewer.innerHTML = `<div style="text-align: center; padding: 100px; color: red;">PDF 렌더링 오류: ${error.message}</div>`;
+    }
 }
 
 // PDF 상호작용 설정 (드래그 선택) - viewport 변환 보정
