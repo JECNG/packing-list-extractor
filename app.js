@@ -565,6 +565,7 @@ async function extractData() {
         // 템플릿 정보 추가
         const templateData = {
             vendor: vendorName,
+            pattern_extraction: true,  // Y축 스캔 방식 활성화
             fields: template.fields.map(f => ({
                 field: f.field,
                 bbox: f.bbox,
