@@ -256,10 +256,7 @@ let startX, startY, tempRect = null;
 
 function setupPdfInteraction(canvas) {
     const viewer = document.getElementById('pdf-viewer');
-    
-    // 기존 이벤트 리스너 제거 (중복 방지)
-    const newViewer = viewer.cloneNode(true);
-    viewer.parentNode.replaceChild(newViewer, viewer);
+    if (!viewer || !canvas) return;
     
     viewer.addEventListener('mousedown', (e) => {
         if (!selectedField) {
@@ -334,8 +331,6 @@ function setupPdfInteraction(canvas) {
         }
         isDrawing = false;
     });
-    
-    interactionSetup = true;
 }
 
 // 필드 선택
