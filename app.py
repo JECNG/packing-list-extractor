@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pdfplumber
 import pandas as pd
+import numpy as np
 import json
 import tempfile
 import os
@@ -67,11 +68,14 @@ def extract():
                         tables = crop.extract_tables()
                         if tables and len(tables) > 0:
                             df = pd.DataFrame(tables[0])
-                            df = df.fillna(0)  # 빈 셀을 0으로 채움
-                            # 숫자 변환 가능한 셀은 숫자로
+                            df = df.fillna('')  # 빈 셀을 빈 문자열로 채움
+                            # 숫자 변환 가능한 셀은 숫자로 (변환 불가능하면 원본 유지)
                             for col in df.columns:
-                                df[col] = pd.to_numeric(df[col], errors='ignore')
-                            extracted_data[field_name] = df.to_dict('records')
+                                numeric_col = pd.to_numeric(df[col], errors='coerce')
+                                # NaN이 아닌 값만 숫자로 변환
+                                df[col] = numeric_col.where(pd.notna(numeric_col), df[col])
+                            # NaN을 None으로 변환 (JSON 직렬화 가능)
+                            extracted_data[field_name] = df.replace({np.nan: None}).to_dict('records')
                         else:
                             extracted_data[field_name] = []
                     else:
