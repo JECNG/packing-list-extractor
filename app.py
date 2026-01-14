@@ -68,23 +68,17 @@ def extract():
                         tables = crop.extract_tables()
                         if tables and len(tables) > 0:
                             df = pd.DataFrame(tables[0])
-                            # 빈 셀을 빈 문자열로 채움
                             df = df.fillna('')
-                            # 숫자 변환 시도 (변환 불가능하면 원본 유지)
                             for col in df.columns:
                                 try:
                                     numeric_series = pd.to_numeric(df[col], errors='coerce')
-                                    # 숫자로 변환된 값만 적용, NaN은 원본 유지
                                     df[col] = numeric_series.where(pd.notna(numeric_series), df[col])
                                 except:
                                     pass
-                            # to_dict 후 NaN/NaT 값을 None으로 변환
                             records = df.to_dict('records')
                             for record in records:
                                 for key, value in record.items():
-                                    if pd.isna(value):
-                                        record[key] = None
-                                    elif isinstance(value, (float, int)) and np.isnan(value):
+                                    if pd.isna(value) or (isinstance(value, (float, int)) and np.isnan(value)):
                                         record[key] = None
                             extracted_data[field_name] = records
                         else:
@@ -104,7 +98,8 @@ def extract():
     except json.JSONDecodeError as e:
         return jsonify({'error': f'템플릿 JSON 파싱 오류: {str(e)}'}), 400
     except Exception as e:
-        return jsonify({'error': f'추출 오류: {str(e)}'}), 500
+        import traceback
+        return jsonify({'error': f'추출 오류: {str(e)}\n{traceback.format_exc()}'}), 500
 
 @app.route('/health', methods=['GET'])
 def health():
