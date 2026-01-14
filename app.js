@@ -80,7 +80,7 @@ function loadEditorTab() {
     ).join('');
     
     content.innerHTML = `
-        <div style="display: grid; grid-template-columns: 1fr 350px; gap: 20px;">
+        <div style="display: grid; grid-template-columns: minmax(0, 1fr) 350px; gap: 20px;">
             <!-- PDF 뷰어 영역 -->
             <div>
                 <div style="background: #f9f9f9; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
@@ -96,7 +96,7 @@ function loadEditorTab() {
                         </div>
                     </div>
                 </div>
-                <div id="pdf-viewer" style="border: 2px solid #ddd; border-radius: 8px; position: relative; background: white; min-height: 800px;">
+                <div id="pdf-viewer" style="border: 2px solid #ddd; border-radius: 8px; position: relative; background: white; min-height: 800px; max-width: 100%; overflow: auto;">
                     <div style="text-align: center; padding: 200px; color: #999;">
                         PDF 파일을 업로드하세요
                     </div>
