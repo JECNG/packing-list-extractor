@@ -16,6 +16,7 @@ let templates = JSON.parse(localStorage.getItem('templates') || '{}');
 let currentPdfDoc = null;
 let currentPage = null;
 let currentViewport = null;
+let currentPageRealViewport = null;  // scale=1.0인 실제 PDF 좌표계
 let currentPageNum = 1;
 let selectedField = null;
 let highlights = [];
@@ -221,7 +222,8 @@ async function renderPage(pageNum) {
     
     try {
         currentPage = await currentPdfDoc.getPage(pageNum);
-        currentViewport = currentPage.getViewport({ scale: 1.5 });
+        currentViewport = currentPage.getViewport({ scale: 1.5 });  // 렌더링용
+        currentPageRealViewport = currentPage.getViewport({ scale: 1.0 });  // 실제 PDF 좌표계 (bbox 저장용)
         
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
@@ -309,12 +311,12 @@ function setupPdfInteraction(canvas) {
         const height = Math.abs(endY - startY);
         
         if (width > 10 && height > 10) {
-            // 캔버스 좌표를 PDF 좌표계로 변환 (viewport 변환)
+            // 캔버스 좌표를 실제 PDF 좌표계로 변환 (scale=1.0 viewport 사용)
             // PDF 좌표계: 왼쪽 아래가 (0,0), Y축이 위로
-            const pdfX0 = (Math.min(startX, endX) / canvas.width) * currentViewport.width;
-            const pdfY0 = currentViewport.height - ((Math.min(startY, endY) / canvas.height) * currentViewport.height);
-            const pdfX1 = (Math.max(startX, endX) / canvas.width) * currentViewport.width;
-            const pdfY1 = currentViewport.height - ((Math.max(startY, endY) / canvas.height) * currentViewport.height);
+            const pdfX0 = (Math.min(startX, endX) / canvas.width) * currentPageRealViewport.width;
+            const pdfY0 = currentPageRealViewport.height - ((Math.min(startY, endY) / canvas.height) * currentPageRealViewport.height);
+            const pdfX1 = (Math.max(startX, endX) / canvas.width) * currentPageRealViewport.width;
+            const pdfY1 = currentPageRealViewport.height - ((Math.max(startY, endY) / canvas.height) * currentPageRealViewport.height);
             
             const bbox = {
                 x0: pdfX0,
