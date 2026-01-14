@@ -20,6 +20,9 @@ let currentPageNum = 1;
 let selectedField = null;
 let highlights = [];
 
+// 백엔드 API URL (Render 배포 후 여기에 URL 입력)
+const API_URL = 'YOUR_RENDER_API_URL_HERE';  // 예: https://packing-list-extractor-api.onrender.com
+
 // 탭 전환
 function showTab(tabName) {
     currentTab = tabName;
@@ -187,18 +190,11 @@ async function handlePdfUpload(event) {
     if (!file) return;
     
     const viewer = document.getElementById('pdf-viewer');
-    if (!viewer) {
-        alert('PDF 뷰어를 찾을 수 없습니다. 페이지를 새로고침해주세요.');
-        return;
-    }
+    if (!viewer) return;
     
     viewer.innerHTML = '<div style="text-align: center; padding: 100px; color: #999;">PDF 로딩 중...</div>';
     
     try {
-        if (typeof pdfjsLib === 'undefined') {
-            throw new Error('PDF.js 라이브러리가 로드되지 않았습니다. 페이지를 새로고침해주세요.');
-        }
-        
         const arrayBuffer = await file.arrayBuffer();
         currentPdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         currentPageNum = 1;
@@ -206,16 +202,7 @@ async function handlePdfUpload(event) {
         await renderPage(currentPageNum);
     } catch (error) {
         console.error('PDF 로딩 오류:', error);
-        const errorMsg = error.message || '알 수 없는 오류가 발생했습니다.';
-        viewer.innerHTML = `
-            <div style="text-align: center; padding: 100px; color: red;">
-                <h4>PDF 로딩 오류</h4>
-                <p>${errorMsg}</p>
-                <p style="color: #666; font-size: 0.9em; margin-top: 20px;">
-                    PDF 파일이 손상되었거나 지원되지 않는 형식일 수 있습니다.
-                </p>
-            </div>
-        `;
+        viewer.innerHTML = `<div style="text-align: center; padding: 100px; color: red;">PDF 로딩 오류: ${error.message}</div>`;
     }
 }
 
@@ -404,80 +391,57 @@ function updateTemplatePreview() {
     const preview = document.getElementById('selected-areas');
     if (!preview) return;
     
-    preview.innerHTML = highlights.map(h => {
-        const fieldType = h.field === 'size_grid' ? 'table' : 'text';
-        const typeLabel = fieldType === 'table' ? '테이블' : '텍스트';
-        return `<div style="margin-bottom: 5px;">${h.field} (${typeLabel}): 페이지 ${h.bbox.page + 1}</div>`;
-    }).join('');
+    preview.innerHTML = highlights.map(h => 
+        `<div>${h.field}: 페이지 ${h.bbox.page + 1}</div>`
+    ).join('');
 }
 
 // 페이지 네비게이션
-async function prevPage() {
-    try {
-        if (currentPageNum > 1) {
-            currentPageNum--;
-            await renderPage(currentPageNum);
-        }
-    } catch (error) {
-        console.error('페이지 이동 오류:', error);
-        alert(`페이지 이동 중 오류가 발생했습니다: ${error.message}`);
+function prevPage() {
+    if (currentPageNum > 1) {
+        currentPageNum--;
+        renderPage(currentPageNum);
     }
 }
 
 async function nextPage() {
-    try {
-        if (currentPdfDoc && currentPageNum < currentPdfDoc.numPages) {
-            currentPageNum++;
-            await renderPage(currentPageNum);
-        }
-    } catch (error) {
-        console.error('페이지 이동 오류:', error);
-        alert(`페이지 이동 중 오류가 발생했습니다: ${error.message}`);
+    if (currentPdfDoc && currentPageNum < currentPdfDoc.numPages) {
+        currentPageNum++;
+        await renderPage(currentPageNum);
     }
 }
 
 // 템플릿 저장
 function saveTemplate() {
-    try {
-        const vendorNameInput = document.getElementById('vendor-name');
-        if (!vendorNameInput) {
-            alert('업체명 입력 필드를 찾을 수 없습니다. 페이지를 새로고침해주세요.');
-            return;
-        }
-        
-        const vendorName = vendorNameInput.value.trim();
-        if (!vendorName) {
-            alert('업체명을 입력해주세요.');
-            return;
-        }
-        
-        if (highlights.length === 0) {
-            alert('필드를 선택해주세요.');
-            return;
-        }
-        
-        templates[vendorName] = {
-            fields: highlights.map(h => ({
-                field: h.field,
-                bbox: h.bbox,
-                type: h.field === 'size_grid' ? 'table' : 'text'  // 사이즈 그리드는 테이블로 처리
-            }))
-        };
-        
-        localStorage.setItem('templates', JSON.stringify(templates));
-        alert(`템플릿 "${vendorName}"이 저장되었습니다!`);
-        
-        // 초기화
-        highlights = [];
-        selectedField = null;
-        vendorNameInput.value = '';
-        document.querySelectorAll('.field-btn').forEach(btn => btn.classList.remove('active'));
-        updateTemplatePreview();
-        renderHighlights();
-    } catch (error) {
-        console.error('템플릿 저장 오류:', error);
-        alert(`템플릿 저장 중 오류가 발생했습니다: ${error.message}`);
+    const vendorName = document.getElementById('vendor-name').value.trim();
+    if (!vendorName) {
+        alert('업체명을 입력해주세요.');
+        return;
     }
+    
+    if (highlights.length === 0) {
+        alert('필드를 선택해주세요.');
+        return;
+    }
+    
+    templates[vendorName] = {
+        fields: highlights.map(h => ({
+            field: h.field,
+            bbox: h.bbox,
+            type: h.field === 'size_grid' ? 'table' : 'text'  // 사이즈 그리드는 테이블로 처리
+        }))
+    };
+    
+    localStorage.setItem('templates', JSON.stringify(templates));
+    alert(`템플릿 "${vendorName}"이 저장되었습니다!`);
+    
+    // 초기화
+    highlights = [];
+    selectedField = null;
+    document.getElementById('vendor-name').value = '';
+    document.querySelectorAll('.field-btn').forEach(btn => btn.classList.remove('active'));
+    updateTemplatePreview();
+    renderHighlights();
 }
 
 // PDF.js로 텍스트 추출 (bbox 영역)
@@ -499,7 +463,7 @@ async function extractTextFromBbox(pdfDoc, pageNum, bbox) {
     return items.map(item => item.str).join(' ').trim();
 }
 
-// 데이터 추출 (Python 백엔드 사용)
+// 데이터 추출 (백엔드 API 사용)
 async function extractData() {
     const vendorName = document.getElementById('vendor-select').value;
     const fileInput = document.getElementById('extract-pdf');
@@ -530,19 +494,20 @@ async function extractData() {
         const formData = new FormData();
         formData.append('pdf', file);
         
-        // 템플릿 정보 추가 (vendor 포함)
+        // 템플릿 정보 추가
         const templateData = {
             vendor: vendorName,
             fields: template.fields.map(f => ({
                 field: f.field,
                 bbox: f.bbox,
-                type: f.type || 'text'  // 기본값: text
+                type: f.type || (f.field === 'size_grid' ? 'table' : 'text')
             }))
         };
         formData.append('template', JSON.stringify(templateData));
         
         // 백엔드 API 호출
-        const response = await fetch('http://localhost:5000/extract', {
+        const apiUrl = API_URL !== 'YOUR_RENDER_API_URL_HERE' ? API_URL : 'http://localhost:5000';
+        const response = await fetch(`${apiUrl}/extract`, {
             method: 'POST',
             body: formData
         });
@@ -572,8 +537,7 @@ async function extractData() {
                 <h4 style="color: #c00;">오류 발생</h4>
                 <p style="color: #c00;">${error.message}</p>
                 <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
-                    Python 백엔드가 실행 중인지 확인하세요:<br>
-                    <code style="background: #fff; padding: 2px 5px; border-radius: 3px;">python app.py</code>
+                    백엔드 서버가 실행 중인지 확인하세요.
                 </p>
             </div>
         `;
@@ -582,40 +546,10 @@ async function extractData() {
 
 // Excel 다운로드
 function downloadExcel(data) {
-    try {
-        // 사이즈 그리드 검증 (총 수량 합계 체크)
-        if (data.size_grid && Array.isArray(data.size_grid)) {
-            let totalQty = 0;
-            const validationErrors = [];
-            
-            data.size_grid.forEach((row, idx) => {
-                Object.values(row).forEach(val => {
-                    const numVal = parseFloat(val);
-                    if (!isNaN(numVal) && numVal > 0) {
-                        totalQty += numVal;
-                    }
-                });
-            });
-            
-            if (totalQty === 0) {
-                validationErrors.push('사이즈 그리드에서 수량을 찾을 수 없습니다.');
-            }
-            
-            if (validationErrors.length > 0) {
-                const proceed = confirm(`경고: ${validationErrors.join(' ')}\n그래도 Excel 파일을 다운로드하시겠습니까?`);
-                if (!proceed) return;
-            }
-        }
-        
-        // Excel 파일 생성
-        const ws = XLSX.utils.json_to_sheet([data]);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-        XLSX.writeFile(wb, "extracted_data.xlsx");
-    } catch (error) {
-        console.error('Excel 다운로드 오류:', error);
-        alert(`Excel 다운로드 중 오류가 발생했습니다: ${error.message}`);
-    }
+    const ws = XLSX.utils.json_to_sheet([data]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    XLSX.writeFile(wb, "extracted_data.xlsx");
 }
 
 // 초기화
