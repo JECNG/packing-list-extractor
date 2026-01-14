@@ -21,7 +21,7 @@ let selectedField = null;
 let highlights = [];
 
 // 백엔드 API URL (Render 배포 후 여기에 URL 입력)
-const API_URL = 'YOUR_RENDER_API_URL_HERE';  // 예: https://packing-list-extractor-api.onrender.com
+const API_URL = 'https://packing-list-extractor-api.onrender.com';
 
 // 탭 전환
 function showTab(tabName) {
