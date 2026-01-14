@@ -104,7 +104,7 @@ function loadEditorTab() {
             </div>
             
             <!-- 필드 선택 영역 -->
-            <div>
+            <div style="min-width: 350px; max-width: 350px;">
                 <h3 style="margin-bottom: 20px;">필드 선택</h3>
                 <div id="field-buttons-container" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; max-height: 300px; overflow-y: auto;">
                     ${fieldButtonsHtml}
@@ -433,10 +433,12 @@ function renderHighlights() {
             const fieldLabel = fieldDefinitions.find(f => f.name === h.field)?.label || h.field;
             
             // PDF 좌표를 캔버스 좌표로 변환 (역변환)
-            const canvasX0 = (h.bbox.x0 / currentViewport.width) * canvas.width;
-            const canvasY0 = canvas.height - ((h.bbox.y0 / currentViewport.height) * canvas.height);
-            const canvasX1 = (h.bbox.x1 / currentViewport.width) * canvas.width;
-            const canvasY1 = canvas.height - ((h.bbox.y1 / currentViewport.height) * canvas.height);
+            // bbox는 scale=1.0 viewport 기준이므로, currentPageRealViewport를 사용해야 함
+            const scale = currentViewport.width / currentPageRealViewport.width;
+            const canvasX0 = (h.bbox.x0 / currentPageRealViewport.width) * canvas.width;
+            const canvasY0 = canvas.height - ((h.bbox.y0 / currentPageRealViewport.height) * canvas.height);
+            const canvasX1 = (h.bbox.x1 / currentPageRealViewport.width) * canvas.width;
+            const canvasY1 = canvas.height - ((h.bbox.y1 / currentPageRealViewport.height) * canvas.height);
             
             rect.style.left = Math.min(canvasX0, canvasX1) + 'px';
             rect.style.top = Math.min(canvasY0, canvasY1) + 'px';
