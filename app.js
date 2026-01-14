@@ -1,5 +1,14 @@
 // PDF.js 설정
-pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+if (typeof pdfjsLib !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+} else {
+    // PDF.js가 로드되기를 기다림
+    window.addEventListener('load', () => {
+        if (typeof pdfjsLib !== 'undefined') {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+    });
+}
 
 // 전역 변수
 let currentTab = 'editor';
@@ -325,6 +334,8 @@ function setupPdfInteraction(canvas) {
         }
         isDrawing = false;
     });
+    
+    interactionSetup = true;
 }
 
 // 필드 선택
