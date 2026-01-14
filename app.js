@@ -553,12 +553,32 @@ async function extractData() {
     }
     
     const resultDiv = document.getElementById('extract-result');
-    resultDiv.innerHTML = '<p>추출 중...</p>';
+    
+    // 로그 표시 영역 생성
+    const logContainer = document.createElement('div');
+    logContainer.style.cssText = 'background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 10px; font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto;';
+    logContainer.id = 'extract-log';
+    
+    function addLog(message) {
+        const logLine = document.createElement('div');
+        logLine.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        logLine.style.cssText = 'padding: 2px 0; color: #666;';
+        logContainer.appendChild(logLine);
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+    
+    resultDiv.innerHTML = '';
+    resultDiv.appendChild(logContainer);
+    addLog('추출 시작...');
     
     try {
         const file = fileInput.files[0];
+        addLog(`PDF 파일: ${file.name}`);
+        addLog(`템플릿: ${vendorName}`);
+        addLog(`필드 수: ${template.fields.length}`);
         
         // FormData 생성
+        addLog('FormData 생성 중...');
         const formData = new FormData();
         formData.append('pdf', file);
         
@@ -573,43 +593,59 @@ async function extractData() {
             }))
         };
         formData.append('template', JSON.stringify(templateData));
+        addLog('템플릿 데이터 준비 완료');
         
         // 백엔드 API 호출
+        addLog('백엔드 서버에 요청 전송 중...');
         const apiUrl = API_URL !== 'YOUR_RENDER_API_URL_HERE' ? API_URL : 'http://localhost:5000';
+        addLog(`API URL: ${apiUrl}`);
+        
         const response = await fetch(`${apiUrl}/extract`, {
             method: 'POST',
             body: formData
         });
         
+        addLog(`응답 상태: ${response.status} ${response.statusText}`);
+        
         if (!response.ok) {
-            const errorData = await response.json();
+            const errorData = await response.json().catch(() => ({ error: '응답 파싱 실패' }));
+            addLog(`오류 발생: ${errorData.error || '알 수 없는 오류'}`);
             throw new Error(errorData.error || '추출 실패');
         }
         
+        addLog('응답 데이터 파싱 중...');
         const result = await response.json();
+        addLog(`추출 완료. 제품 수: ${result.products ? result.products.length : 'N/A'}`);
+        
         const extractedData = result.data;
         
         // 결과 표시
-        resultDiv.innerHTML = `
-            <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                <h4>추출 결과</h4>
-                <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto; max-height: 400px; overflow-y: auto;">${JSON.stringify(extractedData, null, 2)}</pre>
-                <button onclick="downloadExcel(${JSON.stringify(extractedData).replace(/"/g, '&quot;')})" style="margin-top: 15px; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                    Excel 다운로드
-                </button>
-            </div>
+        const resultContainer = document.createElement('div');
+        resultContainer.style.cssText = 'background: white; padding: 20px; border-radius: 8px; margin-top: 10px;';
+        resultContainer.innerHTML = `
+            <h4>추출 결과</h4>
+            <pre style="background: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto; max-height: 400px; overflow-y: auto;">${JSON.stringify(extractedData, null, 2)}</pre>
+            <button onclick="downloadExcel(${JSON.stringify(extractedData).replace(/"/g, '&quot;')})" style="margin-top: 15px; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                Excel 다운로드
+            </button>
         `;
+        resultDiv.appendChild(resultContainer);
+        addLog('결과 표시 완료');
+        
     } catch (error) {
         console.error('추출 오류:', error);
-        resultDiv.innerHTML = `
-            <div style="background: #fee; padding: 20px; border-radius: 8px; border: 1px solid #fcc;">
-                <h4 style="color: #c00;">오류 발생</h4>
-                <p style="color: #c00;">${error.message}</p>
-                <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
-                    백엔드 서버가 실행 중인지 확인하세요.
-                </p>
-            </div>
+        addLog(`오류 발생: ${error.message}`);
+        
+        const errorContainer = document.createElement('div');
+        errorContainer.style.cssText = 'background: #fee; padding: 20px; border-radius: 8px; border: 1px solid #fcc; margin-top: 10px;';
+        errorContainer.innerHTML = `
+            <h4 style="color: #c00;">오류 발생</h4>
+            <p style="color: #c00;">${error.message}</p>
+            <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
+                백엔드 서버가 실행 중인지 확인하세요.
+            </p>
         `;
+        resultDiv.appendChild(errorContainer);
     }
 }
 
