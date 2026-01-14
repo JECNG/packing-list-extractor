@@ -434,7 +434,6 @@ function renderHighlights() {
             
             // PDF 좌표를 캔버스 좌표로 변환 (역변환)
             // bbox는 scale=1.0 viewport 기준이므로, currentPageRealViewport를 사용해야 함
-            const scale = currentViewport.width / currentPageRealViewport.width;
             const canvasX0 = (h.bbox.x0 / currentPageRealViewport.width) * canvas.width;
             const canvasY0 = canvas.height - ((h.bbox.y0 / currentPageRealViewport.height) * canvas.height);
             const canvasX1 = (h.bbox.x1 / currentPageRealViewport.width) * canvas.width;
