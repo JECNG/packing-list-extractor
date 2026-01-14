@@ -52,16 +52,13 @@ def extract():
                     page = pdf.pages[page_num]
                     
                     # PDF 좌표계 변환 (pdfplumber는 왼쪽 아래가 (0,0))
-                    # JavaScript bbox: y0=위(큰값), y1=아래(작은값)
-                    # pdfplumber crop: (x0, y0_bottom, x1, y1_top)
-                    y_bottom = page.height - bbox['y0']  # JavaScript y0 (위) -> pdfplumber y0 (아래)
-                    y_top = page.height - bbox['y1']     # JavaScript y1 (아래) -> pdfplumber y1 (위)
-                    crop_box = (
-                        min(bbox['x0'], bbox['x1']),
-                        min(y_bottom, y_top),
-                        max(bbox['x0'], bbox['x1']),
-                        max(y_bottom, y_top)
-                    )
+                    # JavaScript bbox: y0=위(큰값), y1=아래(작은값), x0=왼쪽, x1=오른쪽
+                    # pdfplumber crop: (x0_left, y0_bottom, x1_right, y1_top)
+                    x_left = min(bbox['x0'], bbox['x1'])
+                    x_right = max(bbox['x0'], bbox['x1'])
+                    y_bottom = page.height - bbox['y0']  # JavaScript y0 (위, 큰값) -> pdfplumber y0 (아래)
+                    y_top = page.height - bbox['y1']     # JavaScript y1 (아래, 작은값) -> pdfplumber y1 (위)
+                    crop_box = (x_left, y_bottom, x_right, y_top)
                     
                     crop = page.crop(crop_box)
                     
