@@ -68,14 +68,25 @@ def extract():
                         tables = crop.extract_tables()
                         if tables and len(tables) > 0:
                             df = pd.DataFrame(tables[0])
-                            df = df.fillna('')  # 빈 셀을 빈 문자열로 채움
-                            # 숫자 변환 가능한 셀은 숫자로 (변환 불가능하면 원본 유지)
+                            # 빈 셀을 빈 문자열로 채움
+                            df = df.fillna('')
+                            # 숫자 변환 시도 (변환 불가능하면 원본 유지)
                             for col in df.columns:
-                                numeric_col = pd.to_numeric(df[col], errors='coerce')
-                                # NaN이 아닌 값만 숫자로 변환
-                                df[col] = numeric_col.where(pd.notna(numeric_col), df[col])
-                            # NaN을 None으로 변환 (JSON 직렬화 가능)
-                            extracted_data[field_name] = df.replace({np.nan: None}).to_dict('records')
+                                try:
+                                    numeric_series = pd.to_numeric(df[col], errors='coerce')
+                                    # 숫자로 변환된 값만 적용, NaN은 원본 유지
+                                    df[col] = numeric_series.where(pd.notna(numeric_series), df[col])
+                                except:
+                                    pass
+                            # to_dict 후 NaN/NaT 값을 None으로 변환
+                            records = df.to_dict('records')
+                            for record in records:
+                                for key, value in record.items():
+                                    if pd.isna(value):
+                                        record[key] = None
+                                    elif isinstance(value, (float, int)) and np.isnan(value):
+                                        record[key] = None
+                            extracted_data[field_name] = records
                         else:
                             extracted_data[field_name] = []
                     else:
