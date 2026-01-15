@@ -76,8 +76,8 @@ def extract_with_y_scan(pdf_path, template):
                 if product_row_y_positions and min(abs(test_y - py) for py in product_row_y_positions) < row_spacing_threshold:
                     continue
                 
-                # 이 Y 위치가 제품 행인지 확인 (각 필드 영역에 텍스트가 있는지 체크)
-                matched_fields = 0
+                # 이 Y 위치가 제품 행인지 확인 (모든 필드 영역에 텍스트가 있어야 함)
+                all_fields_matched = True
                 for field_name, field_config in field_configs.items():
                     # 이 제품 행에서 필드의 예상 Y 위치 계산
                     expected_field_y0 = test_y - field_config['offset']
@@ -85,15 +85,20 @@ def extract_with_y_scan(pdf_path, template):
                     
                     x0, x1 = field_config['x0'], field_config['x1']
                     # 필드 영역(X AND Y) 내에 텍스트가 있는지 확인
+                    found_text = False
                     for char_data in chars_with_js_y:
                         char_y = char_data['y_js']
                         char_x = char_data['x']
                         if (x0 <= char_x <= x1) and (expected_field_y1 <= char_y <= expected_field_y0):
-                            matched_fields += 1
+                            found_text = True
                             break
+                    
+                    if not found_text:
+                        all_fields_matched = False
+                        break
                 
-                # 필드의 절반 이상이 매칭되면 제품 행으로 인식
-                if matched_fields >= len(field_configs) * 0.5:
+                # 모든 필드가 매칭되면 제품 행으로 인식
+                if all_fields_matched:
                     product_row_y_positions.append(test_y)
             
             # 제품 행별로 데이터 추출
@@ -147,8 +152,8 @@ def extract_with_y_scan(pdf_path, template):
                     else:
                         product_data[field_name] = None
                 
-                # 빈 제품이 아니면 추가
-                if any(v for v in product_data.values() if v):
+                # 모든 필드가 채워진 경우에만 제품으로 추가
+                if all(v for v in product_data.values() if v):
                     all_products.append(product_data)
         
         return all_products
