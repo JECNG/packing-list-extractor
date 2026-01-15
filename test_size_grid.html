@@ -425,13 +425,18 @@
             
             // PDF 전체 높이를 기준으로 Y 위치 생성 (맨 위부터 맨 아래까지)
             const yTolerance = 2;
-            // 텍스트가 있는 Y 위치만 사용하지 않고, 페이지 전체를 스캔
-            const minY = Math.min(...charsWithY.map(c => c.y));
-            const maxY = Math.max(...charsWithY.map(c => c.y));
+            // PDF 페이지의 실제 높이 가져오기 (PDF.js에서 view 배열 사용)
+            // currentPage.view = [x0, y0, x1, y1] 형식, y1이 페이지 높이
+            const pdfPageHeight = currentPage.view ? currentPage.view[3] : pageViewport.height;
             
-            // 위에서 아래로 (큰 값부터 작은 값까지) 스캔할 Y 위치 생성
+            // 텍스트가 있는 최소 Y 위치 찾기
+            const textYPositions = charsWithY.map(c => c.y);
+            const minTextY = textYPositions.length > 0 ? Math.min(...textYPositions) : 0;
+            
+            // PDF 맨 위(큰 Y 값 = 페이지 높이)부터 텍스트가 있는 최소 Y까지 스캔
+            // PDF 좌표계에서는 Y가 위에서 아래로 감소 (위가 큰 값)
             uniqueYPositions = [];
-            for (let y = maxY; y >= minY; y -= yTolerance) {
+            for (let y = pdfPageHeight; y >= minTextY; y -= yTolerance) {
                 uniqueYPositions.push(y);
             }
             
