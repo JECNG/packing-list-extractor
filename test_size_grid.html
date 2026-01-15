@@ -103,6 +103,28 @@
             background: rgba(67, 233, 123, 0.2);
         }
         
+        .field-extracted-text {
+            position: absolute;
+            background: rgba(255, 215, 0, 0.8);
+            border: 2px solid #ff9800;
+            padding: 3px 6px;
+            font-size: 11px;
+            font-weight: bold;
+            color: #000;
+            pointer-events: none;
+            z-index: 10;
+            border-radius: 3px;
+            word-break: break-all;
+            max-width: 200px;
+        }
+        
+        .field-colors {
+            code: #667eea;
+            brand: #f093fb;
+            color: #fa709a;
+            size_grid: #ff6b6b;
+        }
+        
         .debug-section {
             margin-bottom: 20px;
             padding: 15px;
@@ -136,7 +158,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>🔍 사이즈 그리드 파싱 시각화 테스트</h1>
+        <h1>🔍 모든 필드 추출 시각화 테스트</h1>
         
         <div class="controls">
             <input type="file" id="pdf-file" accept=".pdf">
@@ -208,6 +230,13 @@
             renderTemplateHighlights();
         }
         
+        const fieldColors = {
+            code: '#667eea',
+            brand: '#f093fb',
+            color: '#fa709a',
+            size_grid: '#ff6b6b'
+        };
+        
         function renderTemplateHighlights() {
             if (!template || !currentPage) return;
             
@@ -217,11 +246,10 @@
             const fields = template.test?.fields || template.fields || [];
             
             fields.forEach(field => {
-                if (field.field === 'size_grid') {
-                    const bbox = field.bbox;
-                    const rect = createHighlightRect(bbox, '#ff6b6b', field.field);
-                    viewer.appendChild(rect);
-                }
+                const bbox = field.bbox;
+                const color = fieldColors[field.field] || '#ff6b6b';
+                const rect = createHighlightRect(bbox, color, field.field);
+                viewer.appendChild(rect);
             });
         }
         
@@ -257,58 +285,52 @@
             const page = await pdfDoc.getPage(1);
             const textContent = await page.getTextContent();
             
-            // size_grid 필드 찾기
-            const sizeGridField = (template.test?.fields || template.fields || []).find(f => f.field === 'size_grid');
-            if (!sizeGridField) {
-                updateStatus('size_grid 필드를 찾을 수 없습니다');
-                return;
+            const fields = template.test?.fields || template.fields || [];
+            const extractedData = {};
+            
+            // 모든 필드 처리
+            for (const field of fields) {
+                const fieldName = field.field;
+                const bbox = field.bbox;
+                const fieldType = field.type || 'text';
+                
+                // 필드 영역 내의 문자 추출
+                const chars_in_field = [];
+                
+                textContent.items.forEach(item => {
+                    const transform = item.transform;
+                    const x = transform[4];
+                    const y = transform[5]; // PDF 좌표계 (위가 큰 값)
+                    
+                    // 필드 영역 내인지 확인
+                    if (x >= bbox.x0 && x <= bbox.x1 && y >= bbox.y1 && y <= bbox.y0) {
+                        chars_in_field.push({
+                            text: item.str,
+                            x: x,
+                            y: y
+                        });
+                    }
+                });
+                
+                // 필드별로 추출
+                if (fieldName === 'size_grid' && fieldType === 'table') {
+                    extractedData[fieldName] = parseSizeGrid(chars_in_field, bbox);
+                } else {
+                    extractedData[fieldName] = extractTextField(chars_in_field, bbox);
+                }
+                
+                // 추출된 텍스트 시각화
+                visualizeExtractedText(fieldName, bbox, extractedData[fieldName], fieldType);
             }
             
-            const bbox = sizeGridField.bbox;
-            
-            // 필드 영역 내의 문자 추출
-            const pageHeight = pageViewport.height;
-            const chars_in_field = [];
-            
-            textContent.items.forEach(item => {
-                const transform = item.transform;
-                const x = transform[4];
-                const y = transform[5]; // PDF 좌표계 (위가 큰 값)
-                
-                // 필드 영역 내인지 확인
-                if (x >= bbox.x0 && x <= bbox.x1 && y >= bbox.y1 && y <= bbox.y0) {
-                    chars_in_field.push({
-                        text: item.str,
-                        x: x,
-                        y: y
-                    });
-                }
-            });
-            
             // 디버그 정보 표시
-            showDebugInfo(chars_in_field, bbox);
-            
-            // 사이즈 그리드 파싱 시뮬레이션
-            parseSizeGrid(chars_in_field, bbox);
+            showDebugInfo(extractedData, fields, textContent);
         }
         
-        function showDebugInfo(chars, bbox) {
-            const panel = document.getElementById('debug-panel');
-            panel.innerHTML = '';
+        function extractTextField(chars, bbox) {
+            if (!chars || chars.length === 0) return null;
             
-            // 필드 정보
-            const fieldInfo = document.createElement('div');
-            fieldInfo.className = 'debug-section';
-            fieldInfo.innerHTML = `
-                <h3>필드 영역</h3>
-                <pre>X: ${bbox.x0.toFixed(2)} ~ ${bbox.x1.toFixed(2)}
-Y: ${bbox.y0.toFixed(2)} ~ ${bbox.y1.toFixed(2)}
-높이: ${(bbox.y0 - bbox.y1).toFixed(2)}</pre>
-                <div>총 문자 수: ${chars.length}</div>
-            `;
-            panel.appendChild(fieldInfo);
-            
-            // Y 위치별 그룹화
+            // Y 위치별로 그룹화
             const yGroups = {};
             chars.forEach(char => {
                 const yRounded = Math.round(char.y);
@@ -318,30 +340,130 @@ Y: ${bbox.y0.toFixed(2)} ~ ${bbox.y1.toFixed(2)}
                 yGroups[yRounded].push(char);
             });
             
-            const yPositions = Object.keys(yGroups).map(k => parseInt(k)).sort((a, b) => b - a);
+            // 각 Y 그룹에서 텍스트 추출
+            const textLines = [];
+            const sortedY = Object.keys(yGroups).map(k => parseInt(k)).sort((a, b) => b - a);
             
-            const yGroupInfo = document.createElement('div');
-            yGroupInfo.className = 'debug-section';
-            yGroupInfo.innerHTML = `
-                <h3>Y 위치별 그룹 (${yPositions.length}개 행)</h3>
-                <div>${yPositions.map(y => `Y=${y} (${yGroups[y].length}개 문자)`).join('<br>')}</div>
-            `;
-            panel.appendChild(yGroupInfo);
-            
-            // 각 행의 텍스트
-            yPositions.forEach((y, idx) => {
+            sortedY.forEach(y => {
                 const rowChars = yGroups[y].sort((a, b) => a.x - b.x);
-                const rowText = rowChars.map(c => c.text).join('');
+                const lineText = rowChars.map(c => c.text).join('').trim();
+                if (lineText) {
+                    textLines.push(lineText);
+                }
+            });
+            
+            return textLines.length > 0 ? textLines.join(' ') : null;
+        }
+        
+        function visualizeExtractedText(fieldName, bbox, extractedValue, fieldType) {
+            const viewer = document.getElementById('pdf-viewer');
+            
+            // 기존 추출 텍스트 제거
+            viewer.querySelectorAll(`.field-extracted-text[data-field="${fieldName}"]`).forEach(el => el.remove());
+            
+            if (!extractedValue) return;
+            
+            const color = fieldColors[fieldName] || '#ff6b6b';
+            const textDiv = document.createElement('div');
+            textDiv.className = 'field-extracted-text';
+            textDiv.setAttribute('data-field', fieldName);
+            
+            let displayText = '';
+            if (fieldType === 'table' && typeof extractedValue === 'object') {
+                displayText = JSON.stringify(extractedValue).substring(0, 100) + '...';
+            } else {
+                displayText = String(extractedValue).substring(0, 50);
+                if (String(extractedValue).length > 50) displayText += '...';
+            }
+            
+            textDiv.textContent = `${fieldName}: ${displayText}`;
+            textDiv.style.borderColor = color;
+            textDiv.style.backgroundColor = color + 'CC';
+            
+            // 필드 영역 위에 표시
+            const canvasX0 = (bbox.x0 / pageViewport.width) * pageViewport.width;
+            const canvasY0 = pageViewport.height - ((bbox.y0 / pageViewport.height) * pageViewport.height);
+            
+            textDiv.style.left = canvasX0 + 'px';
+            textDiv.style.top = (canvasY0 - 25) + 'px';
+            
+            viewer.appendChild(textDiv);
+        }
+        
+        function showDebugInfo(extractedData, fields, textContent) {
+            const panel = document.getElementById('debug-panel');
+            panel.innerHTML = '';
+            
+            // 전체 추출 결과
+            const summarySection = document.createElement('div');
+            summarySection.className = 'debug-section';
+            summarySection.innerHTML = `
+                <h3>📊 전체 추출 결과</h3>
+                <pre>${JSON.stringify(extractedData, null, 2)}</pre>
+            `;
+            panel.appendChild(summarySection);
+            
+            // 각 필드별 상세 정보
+            fields.forEach(field => {
+                const fieldName = field.field;
+                const bbox = field.bbox;
+                const fieldType = field.type || 'text';
                 
-                const rowInfo = document.createElement('div');
-                rowInfo.className = 'debug-section';
-                rowInfo.innerHTML = `
-                    <h3>행 ${idx + 1} (Y=${y})</h3>
-                    <pre>${rowText}</pre>
-                    <div>문자 수: ${rowChars.length}</div>
-                    <div>X 범위: ${Math.min(...rowChars.map(c => c.x)).toFixed(2)} ~ ${Math.max(...rowChars.map(c => c.x)).toFixed(2)}</div>
+                // 필드 영역 내의 문자 추출
+                const chars_in_field = [];
+                textContent.items.forEach(item => {
+                    const transform = item.transform;
+                    const x = transform[4];
+                    const y = transform[5];
+                    if (x >= bbox.x0 && x <= bbox.x1 && y >= bbox.y1 && y <= bbox.y0) {
+                        chars_in_field.push({
+                            text: item.str,
+                            x: x,
+                            y: y
+                        });
+                    }
+                });
+                
+                const fieldSection = document.createElement('div');
+                fieldSection.className = 'debug-section';
+                fieldSection.style.borderLeft = `4px solid ${fieldColors[fieldName] || '#ff6b6b'}`;
+                
+                let fieldDetail = `
+                    <h3 style="color: ${fieldColors[fieldName] || '#ff6b6b'}">필드: ${fieldName} (${fieldType})</h3>
+                    <div><strong>영역:</strong> X: ${bbox.x0.toFixed(2)} ~ ${bbox.x1.toFixed(2)}, Y: ${bbox.y0.toFixed(2)} ~ ${bbox.y1.toFixed(2)}</div>
+                    <div><strong>추출된 문자 수:</strong> ${chars_in_field.length}</div>
+                    <div><strong>추출 결과:</strong></div>
+                    <pre>${JSON.stringify(extractedData[fieldName], null, 2)}</pre>
                 `;
-                panel.appendChild(rowInfo);
+                
+                // Y 위치별 그룹화 정보
+                if (chars_in_field.length > 0) {
+                    const yGroups = {};
+                    chars_in_field.forEach(char => {
+                        const yRounded = Math.round(char.y);
+                        if (!yGroups[yRounded]) {
+                            yGroups[yRounded] = [];
+                        }
+                        yGroups[yRounded].push(char);
+                    });
+                    
+                    const yPositions = Object.keys(yGroups).map(k => parseInt(k)).sort((a, b) => b - a);
+                    
+                    fieldDetail += `
+                        <div style="margin-top: 10px;"><strong>Y 위치별 그룹 (${yPositions.length}개 행):</strong></div>
+                        <div style="font-size: 11px; margin-top: 5px;">
+                            ${yPositions.slice(0, 5).map(y => {
+                                const rowChars = yGroups[y].sort((a, b) => a.x - b.x);
+                                const rowText = rowChars.map(c => c.text).join('');
+                                return `Y=${y}: "${rowText.substring(0, 50)}${rowText.length > 50 ? '...' : ''}"`;
+                            }).join('<br>')}
+                            ${yPositions.length > 5 ? `<br>... (총 ${yPositions.length}개 행)` : ''}
+                        </div>
+                    `;
+                }
+                
+                fieldSection.innerHTML = fieldDetail;
+                panel.appendChild(fieldSection);
             });
         }
         
