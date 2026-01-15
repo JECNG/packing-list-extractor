@@ -11,6 +11,142 @@ from collections import defaultdict
 app = Flask(__name__)
 CORS(app)  # 프론트엔드에서 API 호출 허용
 
+def parse_size_grid(field_chars):
+    """
+    사이즈 그리드 파싱: size 행과 qty 행을 X 좌표로 매핑
+    
+    Args:
+        field_chars: [(y, x, text), ...] 형식의 문자 데이터
+        
+    Returns:
+        dict: {size: qty, ...} 형식의 딕셔너리 또는 None
+    """
+    if not field_chars:
+        return None
+    
+    # Y 위치별로 그룹화 (위에서 아래로)
+    y_groups = {}
+    for char_y, char_x, char_text in field_chars:
+        y_rounded = round(char_y)  # Y 좌표 반올림
+        if y_rounded not in y_groups:
+            y_groups[y_rounded] = []
+        y_groups[y_rounded].append((char_x, char_text))
+    
+    # Y 위치로 정렬 (위에서 아래로, 큰 값부터)
+    sorted_y_positions = sorted(y_groups.keys(), reverse=True)
+    
+    if len(sorted_y_positions) < 2:
+        # 사이즈 그리드가 제대로 파싱되지 않음
+        return None
+    
+    # 첫 번째 행(위쪽) = size 행, 두 번째 행(아래쪽) = qty 행
+    size_row_y = sorted_y_positions[0]
+    qty_row_y = sorted_y_positions[1]
+    
+    # size 행의 문자들을 X 좌표 순으로 정렬
+    size_chars = sorted(y_groups[size_row_y], key=lambda c: c[0])
+    
+    # size 행에서 각 사이즈의 X 좌표 범위 추출
+    size_positions = []  # [(size_text, x_center, x_start, x_end), ...]
+    current_size_chars = []
+    prev_x = None
+    
+    for char_x, char_text in size_chars:
+        # 연속된 문자 그룹화 (X 좌표가 5픽셀 이내면 같은 셀로 간주)
+        if prev_x is not None and abs(char_x - prev_x) > 5:
+            # 새 셀 시작 - 이전 사이즈 저장
+            if current_size_chars:
+                size_text = ''.join(c[1] for c in current_size_chars).strip()
+                if size_text:
+                    x_start = min(c[0] for c in current_size_chars)
+                    x_end = max(c[0] for c in current_size_chars)
+                    x_center = (x_start + x_end) / 2
+                    size_positions.append((size_text, x_center, x_start, x_end))
+                current_size_chars = []
+        
+        current_size_chars.append((char_x, char_text))
+        prev_x = char_x
+    
+    # 마지막 사이즈 저장
+    if current_size_chars:
+        size_text = ''.join(c[1] for c in current_size_chars).strip()
+        if size_text:
+            x_start = min(c[0] for c in current_size_chars)
+            x_end = max(c[0] for c in current_size_chars)
+            x_center = (x_start + x_end) / 2
+            size_positions.append((size_text, x_center, x_start, x_end))
+    
+    if not size_positions:
+        return None
+    
+    # qty 행의 문자들을 X 좌표 순으로 정렬
+    qty_chars = sorted(y_groups[qty_row_y], key=lambda c: c[0])
+    
+    # qty 행에서 각 수량의 X 좌표 추출
+    qty_positions = []  # [(qty_text, x_center), ...]
+    current_qty_chars = []
+    prev_x = None
+    
+    for char_x, char_text in qty_chars:
+        # 연속된 문자 그룹화
+        if prev_x is not None and abs(char_x - prev_x) > 5:
+            # 새 셀 시작
+            if current_qty_chars:
+                qty_text = ''.join(c[1] for c in current_qty_chars).strip()
+                if qty_text:
+                    x_start = min(c[0] for c in current_qty_chars)
+                    x_end = max(c[0] for c in current_qty_chars)
+                    x_center = (x_start + x_end) / 2
+                    qty_positions.append((qty_text, x_center))
+                current_qty_chars = []
+        
+        current_qty_chars.append((char_x, char_text))
+        prev_x = char_x
+    
+    # 마지막 수량 저장
+    if current_qty_chars:
+        qty_text = ''.join(c[1] for c in current_qty_chars).strip()
+        if qty_text:
+            x_start = min(c[0] for c in current_qty_chars)
+            x_end = max(c[0] for c in current_qty_chars)
+            x_center = (x_start + x_end) / 2
+            qty_positions.append((qty_text, x_center))
+    
+    # 각 사이즈에 대해 가장 가까운 qty 찾기
+    size_grid_dict = {}
+    
+    for size_text, size_x_center, size_x_start, size_x_end in size_positions:
+        # 사이즈 셀의 중앙 X 좌표와 가장 가까운 qty 찾기
+        matched_qty = None
+        min_distance = float('inf')
+        
+        for qty_text, qty_x_center in qty_positions:
+            # qty가 사이즈 셀 범위 내에 있거나, 가장 가까운 경우
+            if size_x_start <= qty_x_center <= size_x_end:
+                # 사이즈 셀 범위 내에 있으면 매칭
+                matched_qty = qty_text
+                break
+            else:
+                # 거리 계산
+                distance = abs(qty_x_center - size_x_center)
+                if distance < min_distance:
+                    min_distance = distance
+                    matched_qty = qty_text
+        
+        # 수량이 없으면 0, 있으면 해당 수량
+        if matched_qty:
+            try:
+                # 숫자로 변환 가능하면 숫자로, 아니면 문자열로
+                qty_value = int(matched_qty)
+            except ValueError:
+                qty_value = matched_qty
+        else:
+            qty_value = 0
+        
+        size_grid_dict[size_text] = qty_value
+    
+    return size_grid_dict
+
 def extract_with_y_scan(pdf_path, template):
     """
     Y축 스캔 방식으로 반복 제품 추출
