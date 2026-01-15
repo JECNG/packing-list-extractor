@@ -66,88 +66,71 @@ def extract_with_y_scan(pdf_path, template):
             # Y 좌표 기준 정렬 (위에서 아래로)
             chars_with_js_y.sort(key=lambda c: -c['y_js'])
             
-            # Y축을 따라 스캔하며 제품 그룹화
-            current_product = {}
-            prev_y = None
+            # 제품 행을 Y 좌표 기준으로 그룹화
             row_threshold = 15  # 행 간격 threshold (픽셀)
+            product_rows = []
+            current_row = []
+            prev_y = None
             
             for char_data in chars_with_js_y:
                 char_y = char_data['y_js']
-                char_x = char_data['x']
                 char_text = char_data['text'].strip()
                 
                 if not char_text:
                     continue
                 
-                # Y 위치가 크게 변하면 새 제품 후보
+                # Y 위치가 크게 변하면 새 행 시작
                 if prev_y is not None and abs(char_y - prev_y) > row_threshold:
-                    # 현재 제품이 완성되면 저장
-                    if current_product:
-                        all_products.append(dict(current_product))
-                        current_product = {}
+                    if current_row:
+                        product_rows.append(current_row)
+                        current_row = []
                 
-                # 각 필드의 X 범위에 텍스트가 있는지 확인
-                for field_name, field_config in field_offsets.items():
-                    x0, x1 = field_config['x0'], field_config['x1']
-                    
-                    # X 범위에 해당하는 문자인지 확인
-                    if x0 <= char_x <= x1:
-                        # Y 위치가 필드 영역 내인지 확인 (대략적으로)
-                        # 첫 제품 기준 Y 위치에서 오프셋으로 계산
-                        expected_y = char_y - field_config['offset']
-                        
-                        if field_name not in current_product:
-                            current_product[field_name] = []
-                        
-                        # 같은 Y 범위의 문자들을 수집
-                        found_match = False
-                        for existing in current_product[field_name]:
-                            if isinstance(existing, dict) and abs(existing.get('y', 0) - char_y) < 10:
-                                existing['text'] += char_text
-                                found_match = True
-                                break
-                        
-                        if not found_match:
-                            current_product[field_name].append({
-                                'text': char_text,
-                                'y': char_y,
-                                'x': char_x
-                            })
-                        break
-                
+                current_row.append(char_data)
                 prev_y = char_y
             
-            # 페이지 끝에서 남은 제품 저장
-            if current_product:
-                all_products.append(dict(current_product))
-        
-        # 텍스트 데이터 정리 및 필드별로 추출
-        cleaned_products = []
-        for product in all_products:
-            cleaned = {}
-            for field_name, field_config in field_offsets.items():
-                if field_name in product:
-                    # 같은 Y 위치의 텍스트들을 합치기
-                    texts = product[field_name]
-                    if texts:
-                        # Y 위치로 정렬
-                        texts.sort(key=lambda t: t['y'] if isinstance(t, dict) else 0)
-                        # 텍스트만 추출하여 합치기
-                        field_text = ' '.join(t['text'] if isinstance(t, dict) else str(t) for t in texts).strip()
-                        if field_text:
-                            cleaned[field_name] = field_text
-                        else:
-                            cleaned[field_name] = None
-                    else:
-                        cleaned[field_name] = None
-                else:
-                    cleaned[field_name] = None
+            # 마지막 행 추가
+            if current_row:
+                product_rows.append(current_row)
             
-            # 빈 제품 제외
-            if any(v for v in cleaned.values() if v):
-                cleaned_products.append(cleaned)
+            # 각 제품 행에서 필드별로 데이터 추출
+            for row_chars in product_rows:
+                if not row_chars:
+                    continue
+                
+                # 행의 기준 Y 위치 (가장 위쪽 문자)
+                row_base_y = max(c['y_js'] for c in row_chars)
+                
+                # 각 필드별로 Y 범위 계산 및 텍스트 수집
+                product_data = {}
+                for field_name, field_config in field_offsets.items():
+                    # 필드의 Y 범위 계산 (행 기준 Y에서 오프셋 적용)
+                    field_y0 = row_base_y - field_config['offset']  # 필드 상단
+                    field_y1 = field_y0 - field_config['height']    # 필드 하단
+                    
+                    x0, x1 = field_config['x0'], field_config['x1']
+                    field_texts = []
+                    
+                    # 필드 영역(X 범위 AND Y 범위) 내의 문자만 수집
+                    for char_data in row_chars:
+                        char_y = char_data['y_js']
+                        char_x = char_data['x']
+                        char_text = char_data['text'].strip()
+                        
+                        # X 범위와 Y 범위 모두 체크
+                        if (x0 <= char_x <= x1) and (field_y1 <= char_y <= field_y0):
+                            field_texts.append(char_text)
+                    
+                    # 필드 영역 내 텍스트가 있으면 합치기
+                    if field_texts:
+                        product_data[field_name] = ' '.join(field_texts).strip()
+                    else:
+                        product_data[field_name] = None
+                
+                # 빈 제품이 아니면 추가
+                if any(v for v in product_data.values() if v):
+                    all_products.append(product_data)
         
-        return cleaned_products
+        return all_products
 
 @app.route('/extract', methods=['POST'])
 def extract():
