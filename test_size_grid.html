@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사이즈 그리드 파싱 테스트</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .controls input, .controls button {
+            margin-right: 10px;
+            margin-bottom: 10px;
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        
+        .controls button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .controls button:hover {
+            background: #5568d3;
+        }
+        
+        .viewer-container {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .pdf-viewer {
+            flex: 1;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+            overflow: auto;
+            max-height: 800px;
+        }
+        
+        .debug-panel {
+            flex: 1;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 800px;
+            overflow-y: auto;
+        }
+        
+        #pdf-canvas {
+            border: 1px solid #ddd;
+            max-width: 100%;
+        }
+        
+        .highlight-rect {
+            position: absolute;
+            border: 2px solid #ff6b6b;
+            background: rgba(255, 107, 107, 0.2);
+            pointer-events: none;
+        }
+        
+        .size-cell {
+            border: 2px solid #4facfe;
+            background: rgba(79, 172, 254, 0.2);
+        }
+        
+        .qty-cell {
+            border: 2px solid #43e97b;
+            background: rgba(67, 233, 123, 0.2);
+        }
+        
+        .debug-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        
+        .debug-section h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .debug-section pre {
+            background: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        
+        .cell-info {
+            display: inline-block;
+            padding: 5px 10px;
+            margin: 5px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 사이즈 그리드 파싱 시각화 테스트</h1>
+        
+        <div class="controls">
+            <input type="file" id="pdf-file" accept=".pdf">
+            <input type="file" id="template-file" accept=".json">
+            <button onclick="loadFiles()">파일 로드</button>
+            <button onclick="startTest()">테스트 시작</button>
+        </div>
+        
+        <div class="viewer-container">
+            <div class="pdf-viewer" id="pdf-viewer">
+                <canvas id="pdf-canvas"></canvas>
+            </div>
+            
+            <div class="debug-panel" id="debug-panel">
+                <div class="debug-section">
+                    <h3>로드 상태</h3>
+                    <div id="status">파일을 선택하고 로드하세요</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        let pdfDoc = null;
+        let currentPage = null;
+        let template = null;
+        let pageScale = 1.5;
+        let pageViewport = null;
+        let canvasContext = null;
+        
+        async function loadFiles() {
+            const pdfFile = document.getElementById('pdf-file').files[0];
+            const templateFile = document.getElementById('template-file').files[0];
+            
+            if (!pdfFile) {
+                alert('PDF 파일을 선택하세요');
+                return;
+            }
+            
+            if (!templateFile) {
+                alert('템플릿 파일을 선택하세요');
+                return;
+            }
+            
+            // PDF 로드
+            const pdfArrayBuffer = await pdfFile.arrayBuffer();
+            pdfDoc = await pdfjsLib.getDocument({ data: pdfArrayBuffer }).promise;
+            currentPage = await pdfDoc.getPage(1);
+            pageViewport = currentPage.getViewport({ scale: pageScale });
+            
+            // Canvas 설정
+            const canvas = document.getElementById('pdf-canvas');
+            canvas.width = pageViewport.width;
+            canvas.height = pageViewport.height;
+            canvasContext = canvas.getContext('2d');
+            
+            await currentPage.render({
+                canvasContext: canvasContext,
+                viewport: pageViewport
+            }).promise;
+            
+            // 템플릿 로드
+            const templateText = await templateFile.text();
+            template = JSON.parse(templateText);
+            
+            updateStatus('파일 로드 완료');
+            renderTemplateHighlights();
+        }
+        
+        function renderTemplateHighlights() {
+            if (!template || !currentPage) return;
+            
+            const viewer = document.getElementById('pdf-viewer');
+            viewer.querySelectorAll('.highlight-rect').forEach(el => el.remove());
+            
+            const fields = template.test?.fields || template.fields || [];
+            
+            fields.forEach(field => {
+                if (field.field === 'size_grid') {
+                    const bbox = field.bbox;
+                    const rect = createHighlightRect(bbox, '#ff6b6b', field.field);
+                    viewer.appendChild(rect);
+                }
+            });
+        }
+        
+        function createHighlightRect(bbox, color, label) {
+            const rect = document.createElement('div');
+            rect.className = 'highlight-rect';
+            
+            // PDF 좌표를 캔버스 좌표로 변환
+            const canvasX0 = (bbox.x0 / pageViewport.width) * pageViewport.width;
+            const canvasY0 = pageViewport.height - ((bbox.y0 / pageViewport.height) * pageViewport.height);
+            const canvasX1 = (bbox.x1 / pageViewport.width) * pageViewport.width;
+            const canvasY1 = pageViewport.height - ((bbox.y1 / pageViewport.height) * pageViewport.height);
+            
+            rect.style.left = Math.min(canvasX0, canvasX1) + 'px';
+            rect.style.top = Math.min(canvasY0, canvasY1) + 'px';
+            rect.style.width = Math.abs(canvasX1 - canvasX0) + 'px';
+            rect.style.height = Math.abs(canvasY1 - canvasY0) + 'px';
+            rect.style.borderColor = color;
+            rect.style.backgroundColor = color.replace(')', ', 0.2)').replace('rgb', 'rgba');
+            rect.title = label;
+            
+            return rect;
+        }
+        
+        async function startTest() {
+            if (!pdfDoc || !template) {
+                alert('먼저 파일을 로드하세요');
+                return;
+            }
+            
+            updateStatus('추출 시작...');
+            
+            const page = await pdfDoc.getPage(1);
+            const textContent = await page.getTextContent();
+            
+            // size_grid 필드 찾기
+            const sizeGridField = (template.test?.fields || template.fields || []).find(f => f.field === 'size_grid');
+            if (!sizeGridField) {
+                updateStatus('size_grid 필드를 찾을 수 없습니다');
+                return;
+            }
+            
+            const bbox = sizeGridField.bbox;
+            
+            // 필드 영역 내의 문자 추출
+            const pageHeight = pageViewport.height;
+            const chars_in_field = [];
+            
+            textContent.items.forEach(item => {
+                const transform = item.transform;
+                const x = transform[4];
+                const y = transform[5]; // PDF 좌표계 (위가 큰 값)
+                
+                // 필드 영역 내인지 확인
+                if (x >= bbox.x0 && x <= bbox.x1 && y >= bbox.y1 && y <= bbox.y0) {
+                    chars_in_field.push({
+                        text: item.str,
+                        x: x,
+                        y: y
+                    });
+                }
+            });
+            
+            // 디버그 정보 표시
+            showDebugInfo(chars_in_field, bbox);
+            
+            // 사이즈 그리드 파싱 시뮬레이션
+            parseSizeGrid(chars_in_field, bbox);
+        }
+        
+        function showDebugInfo(chars, bbox) {
+            const panel = document.getElementById('debug-panel');
+            panel.innerHTML = '';
+            
+            // 필드 정보
+            const fieldInfo = document.createElement('div');
+            fieldInfo.className = 'debug-section';
+            fieldInfo.innerHTML = `
+                <h3>필드 영역</h3>
+                <pre>X: ${bbox.x0.toFixed(2)} ~ ${bbox.x1.toFixed(2)}
+Y: ${bbox.y0.toFixed(2)} ~ ${bbox.y1.toFixed(2)}
+높이: ${(bbox.y0 - bbox.y1).toFixed(2)}</pre>
+                <div>총 문자 수: ${chars.length}</div>
+            `;
+            panel.appendChild(fieldInfo);
+            
+            // Y 위치별 그룹화
+            const yGroups = {};
+            chars.forEach(char => {
+                const yRounded = Math.round(char.y);
+                if (!yGroups[yRounded]) {
+                    yGroups[yRounded] = [];
+                }
+                yGroups[yRounded].push(char);
+            });
+            
+            const yPositions = Object.keys(yGroups).map(k => parseInt(k)).sort((a, b) => b - a);
+            
+            const yGroupInfo = document.createElement('div');
+            yGroupInfo.className = 'debug-section';
+            yGroupInfo.innerHTML = `
+                <h3>Y 위치별 그룹 (${yPositions.length}개 행)</h3>
+                <div>${yPositions.map(y => `Y=${y} (${yGroups[y].length}개 문자)`).join('<br>')}</div>
+            `;
+            panel.appendChild(yGroupInfo);
+            
+            // 각 행의 텍스트
+            yPositions.forEach((y, idx) => {
+                const rowChars = yGroups[y].sort((a, b) => a.x - b.x);
+                const rowText = rowChars.map(c => c.text).join('');
+                
+                const rowInfo = document.createElement('div');
+                rowInfo.className = 'debug-section';
+                rowInfo.innerHTML = `
+                    <h3>행 ${idx + 1} (Y=${y})</h3>
+                    <pre>${rowText}</pre>
+                    <div>문자 수: ${rowChars.length}</div>
+                    <div>X 범위: ${Math.min(...rowChars.map(c => c.x)).toFixed(2)} ~ ${Math.max(...rowChars.map(c => c.x)).toFixed(2)}</div>
+                `;
+                panel.appendChild(rowInfo);
+            });
+        }
+        
+        function parseSizeGrid(chars, bbox) {
+            // Y 위치별로 그룹화
+            const yGroups = {};
+            chars.forEach(char => {
+                const yRounded = Math.round(char.y);
+                if (!yGroups[yRounded]) {
+                    yGroups[yRounded] = [];
+                }
+                yGroups[yRounded].push(char);
+            });
+            
+            const sortedY = Object.keys(yGroups).map(k => parseInt(k)).sort((a, b) => b - a);
+            
+            if (sortedY.length < 2) {
+                updateStatus('행이 2개 미만입니다');
+                return;
+            }
+            
+            // 셀 추출 함수
+            function extractCells(rowChars) {
+                const sorted = rowChars.sort((a, b) => a.x - b.x);
+                const cells = [];
+                let currentCell = [];
+                let prevX = null;
+                const threshold = 15;
+                
+                sorted.forEach(char => {
+                    if (prevX !== null && Math.abs(char.x - prevX) > threshold) {
+                        if (currentCell.length > 0) {
+                            const text = currentCell.map(c => c.text).join('').trim();
+                            if (text) {
+                                const xStart = Math.min(...currentCell.map(c => c.x));
+                                const xEnd = Math.max(...currentCell.map(c => c.x));
+                                const xCenter = (xStart + xEnd) / 2;
+                                cells.push({ text, xCenter, xStart, xEnd });
+                            }
+                            currentCell = [];
+                        }
+                    }
+                    currentCell.push(char);
+                    prevX = char.x;
+                });
+                
+                if (currentCell.length > 0) {
+                    const text = currentCell.map(c => c.text).join('').trim();
+                    if (text) {
+                        const xStart = Math.min(...currentCell.map(c => c.x));
+                        const xEnd = Math.max(...currentCell.map(c => c.x));
+                        const xCenter = (xStart + xEnd) / 2;
+                        cells.push({ text, xCenter, xStart, xEnd });
+                    }
+                }
+                
+                return cells;
+            }
+            
+            // 각 행에서 셀 추출
+            const rowCells = {};
+            sortedY.forEach(y => {
+                const cells = extractCells(yGroups[y]);
+                if (cells.length > 0) {
+                    rowCells[y] = cells;
+                }
+            });
+            
+            // size 행과 qty 행 찾기
+            let sizeRow = null;
+            let qtyRow = null;
+            
+            for (const y of sortedY) {
+                const cells = rowCells[y];
+                if (!cells) continue;
+                
+                const allNumeric = cells.every(cell => {
+                    const cleaned = cell.text.replace('½', '').replace('.', '').replace(',', '').replace('-', '').replace(' ', '');
+                    return cleaned && /^\d+$/.test(cleaned);
+                });
+                
+                if (allNumeric && !qtyRow) {
+                    qtyRow = { y, cells };
+                } else if (!sizeRow && cells.some(c => c.text.match(/\d+/))) {
+                    sizeRow = { y, cells };
+                }
+            }
+            
+            // 시각화
+            visualizeCells(sizeRow, qtyRow);
+            
+            // 결과 표시
+            showParsingResult(sizeRow, qtyRow);
+        }
+        
+        function visualizeCells(sizeRow, qtyRow) {
+            const viewer = document.getElementById('pdf-viewer');
+            viewer.querySelectorAll('.size-cell, .qty-cell').forEach(el => el.remove());
+            
+            function drawCells(row, className, label) {
+                if (!row) return;
+                
+                row.cells.forEach(cell => {
+                    const rect = document.createElement('div');
+                    rect.className = `highlight-rect ${className}`;
+                    
+                    const canvasX0 = (cell.xStart / pageViewport.width) * pageViewport.width;
+                    const canvasY0 = pageViewport.height - ((row.y / pageViewport.height) * pageViewport.height) - 20;
+                    const canvasX1 = (cell.xEnd / pageViewport.width) * pageViewport.width;
+                    const canvasY1 = canvasY0 - 20;
+                    
+                    rect.style.left = Math.min(canvasX0, canvasX1) + 'px';
+                    rect.style.top = Math.min(canvasY0, canvasY1) + 'px';
+                    rect.style.width = Math.abs(canvasX1 - canvasX0) + 'px';
+                    rect.style.height = 20 + 'px';
+                    rect.title = `${label}: ${cell.text}`;
+                    rect.textContent = cell.text;
+                    rect.style.fontSize = '10px';
+                    rect.style.padding = '2px';
+                    rect.style.display = 'flex';
+                    rect.style.alignItems = 'center';
+                    rect.style.justifyContent = 'center';
+                    
+                    viewer.appendChild(rect);
+                });
+            }
+            
+            drawCells(sizeRow, 'size-cell', 'Size');
+            drawCells(qtyRow, 'qty-cell', 'Qty');
+        }
+        
+        function showParsingResult(sizeRow, qtyRow) {
+            const panel = document.getElementById('debug-panel');
+            
+            const resultSection = document.createElement('div');
+            resultSection.className = 'debug-section';
+            
+            if (!sizeRow || !qtyRow) {
+                resultSection.innerHTML = `
+                    <h3>파싱 결과</h3>
+                    <div style="color: red;">Size 행 또는 Qty 행을 찾을 수 없습니다</div>
+                    <div>Size 행: ${sizeRow ? '발견' : '없음'}</div>
+                    <div>Qty 행: ${qtyRow ? '발견' : '없음'}</div>
+                `;
+                panel.appendChild(resultSection);
+                return;
+            }
+            
+            // 매핑 결과
+            const mapping = {};
+            sizeRow.cells.forEach(sizeCell => {
+                let matchedQty = null;
+                let minDist = Infinity;
+                
+                qtyRow.cells.forEach(qtyCell => {
+                    if ((sizeCell.xStart <= qtyCell.xCenter && qtyCell.xCenter <= sizeCell.xEnd) ||
+                        (qtyCell.xStart <= sizeCell.xCenter && sizeCell.xCenter <= qtyCell.xEnd)) {
+                        matchedQty = qtyCell.text;
+                    } else {
+                        const dist = Math.abs(qtyCell.xCenter - sizeCell.xCenter);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            matchedQty = qtyCell.text;
+                        }
+                    }
+                });
+                
+                const numbers = matchedQty ? matchedQty.match(/\d+/) : null;
+                mapping[sizeCell.text] = numbers ? parseInt(numbers[0]) : 0;
+            });
+            
+            resultSection.innerHTML = `
+                <h3>파싱 결과</h3>
+                <div><strong>Size 행 (Y=${sizeRow.y}):</strong></div>
+                <div>${sizeRow.cells.map(c => `<span class="cell-info">${c.text}</span>`).join('')}</div>
+                <div style="margin-top: 10px;"><strong>Qty 행 (Y=${qtyRow.y}):</strong></div>
+                <div>${qtyRow.cells.map(c => `<span class="cell-info">${c.text}</span>`).join('')}</div>
+                <div style="margin-top: 10px;"><strong>매핑 결과:</strong></div>
+                <pre>${JSON.stringify(mapping, null, 2)}</pre>
+            `;
+            panel.appendChild(resultSection);
+        }
+        
+        function updateStatus(msg) {
+            const status = document.getElementById('status');
+            status.textContent = msg;
+        }
+    </script>
+</body>
+</html>
+
