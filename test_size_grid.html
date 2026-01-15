@@ -125,6 +125,51 @@
             size_grid: #ff6b6b;
         }
         
+        .scan-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #00ff00;
+            box-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00;
+            z-index: 1000;
+            pointer-events: none;
+            transition: top 0.05s linear;
+        }
+        
+        .product-row-detected {
+            position: absolute;
+            left: 0;
+            right: 0;
+            border-top: 3px solid #00ff00;
+            border-bottom: 3px solid #00ff00;
+            background: rgba(0, 255, 0, 0.1);
+            z-index: 100;
+            pointer-events: none;
+            animation: detectPulse 0.5s ease-out;
+        }
+        
+        @keyframes detectPulse {
+            0% {
+                background: rgba(0, 255, 0, 0.5);
+                box-shadow: 0 0 20px rgba(0, 255, 0, 0.8);
+            }
+            100% {
+                background: rgba(0, 255, 0, 0.1);
+                box-shadow: none;
+            }
+        }
+        
+        .animation-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .animation-controls input[type="range"] {
+            width: 200px;
+        }
+        
         .debug-section {
             margin-bottom: 20px;
             padding: 15px;
@@ -165,6 +210,13 @@
             <input type="file" id="template-file" accept=".json">
             <button onclick="loadFiles()">파일 로드</button>
             <button onclick="startTest()">테스트 시작</button>
+            <button onclick="startAnimation()" id="anim-btn">애니메이션 시작</button>
+            <button onclick="stopAnimation()" id="stop-btn" style="display:none;">애니메이션 정지</button>
+            <div class="animation-controls" style="display:inline-block; margin-left: 10px;">
+                <label>속도:</label>
+                <input type="range" id="speed-slider" min="1" max="10" value="5" onchange="updateSpeed()">
+                <span id="speed-value">5x</span>
+            </div>
         </div>
         
         <div class="viewer-container">
@@ -190,6 +242,13 @@
         let pageScale = 1.5;
         let pageViewport = null;
         let canvasContext = null;
+        let animationRunning = false;
+        let animationSpeed = 5;
+        let uniqueYPositions = [];
+        let fieldConfigs = {};
+        let firstProductTopY = 0;
+        let charsWithY = [];
+        let detectedProductRows = [];
         
         async function loadFiles() {
             const pdfFile = document.getElementById('pdf-file').files[0];
@@ -286,6 +345,10 @@
             const textContent = await page.getTextContent();
             
             const fields = template.test?.fields || template.fields || [];
+            
+            // Y축 스캔에 필요한 데이터 준비
+            prepareYScanData(fields, textContent);
+            
             const extractedData = {};
             
             // 모든 필드 처리
@@ -325,6 +388,183 @@
             
             // 디버그 정보 표시
             showDebugInfo(extractedData, fields, textContent);
+        }
+        
+        function prepareYScanData(fields, textContent) {
+            // 모든 문자를 Y 좌표와 함께 저장
+            charsWithY = [];
+            textContent.items.forEach(item => {
+                const transform = item.transform;
+                charsWithY.push({
+                    text: item.str,
+                    x: transform[4],
+                    y: transform[5]
+                });
+            });
+            
+            // Y 좌표 기준 정렬
+            charsWithY.sort((a, b) => b.y - a.y);
+            
+            // 첫 제품 기준 Y 위치 계산
+            firstProductTopY = Math.max(...fields.map(f => f.bbox.y0));
+            
+            // 필드 설정 저장
+            fieldConfigs = {};
+            fields.forEach(field => {
+                const bbox = field.bbox;
+                const offset = firstProductTopY - bbox.y0;
+                fieldConfigs[field.field] = {
+                    offset: offset,
+                    x0: Math.min(bbox.x0, bbox.x1),
+                    x1: Math.max(bbox.x0, bbox.x1),
+                    y0_template: bbox.y0,
+                    y1_template: bbox.y1,
+                    height: Math.abs(bbox.y0 - bbox.y1)
+                };
+            });
+            
+            // 유일한 Y 위치 추출
+            const yTolerance = 2;
+            uniqueYPositions = [...new Set(charsWithY.map(c => Math.round(c.y / yTolerance) * yTolerance))].sort((a, b) => b - a);
+            
+            detectedProductRows = [];
+        }
+        
+        async function startAnimation() {
+            if (!pdfDoc || !template || uniqueYPositions.length === 0) {
+                alert('먼저 테스트를 실행하세요');
+                return;
+            }
+            
+            if (animationRunning) return;
+            
+            animationRunning = true;
+            document.getElementById('anim-btn').style.display = 'none';
+            document.getElementById('stop-btn').style.display = 'inline-block';
+            
+            const viewer = document.getElementById('pdf-viewer');
+            const scanLine = document.createElement('div');
+            scanLine.className = 'scan-line';
+            scanLine.id = 'scan-line';
+            viewer.appendChild(scanLine);
+            
+            // 감지된 제품 행 표시 초기화
+            viewer.querySelectorAll('.product-row-detected').forEach(el => el.remove());
+            detectedProductRows = [];
+            
+            const yTolerance = 2;
+            const rowSpacingThreshold = 30;
+            
+            for (let i = 0; i < uniqueYPositions.length; i++) {
+                if (!animationRunning) break;
+                
+                const testY = uniqueYPositions[i];
+                
+                // 스캔 라인 이동
+                const canvasY = pageViewport.height - ((testY / pageViewport.height) * pageViewport.height);
+                scanLine.style.top = canvasY + 'px';
+                
+                await sleep(100 / animationSpeed);
+                
+                // 제품 행 체크
+                const isProductRow = await checkProductRow(testY, yTolerance, rowSpacingThreshold);
+                
+                if (isProductRow) {
+                    // 제품 행 표시
+                    showDetectedProductRow(testY);
+                    detectedProductRows.push(testY);
+                }
+            }
+            
+            // 애니메이션 종료
+            scanLine.remove();
+            animationRunning = false;
+            document.getElementById('anim-btn').style.display = 'inline-block';
+            document.getElementById('stop-btn').style.display = 'none';
+            updateStatus(`애니메이션 완료. ${detectedProductRows.length}개 제품 행 감지됨`);
+        }
+        
+        function stopAnimation() {
+            animationRunning = false;
+            document.getElementById('scan-line')?.remove();
+            document.getElementById('anim-btn').style.display = 'inline-block';
+            document.getElementById('stop-btn').style.display = 'none';
+        }
+        
+        function updateSpeed() {
+            animationSpeed = parseInt(document.getElementById('speed-slider').value);
+            document.getElementById('speed-value').textContent = animationSpeed + 'x';
+        }
+        
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+        
+        async function checkProductRow(testY, yTolerance, rowSpacingThreshold) {
+            // 이미 감지된 제품 행과 너무 가까우면 스킵
+            if (detectedProductRows.length > 0) {
+                const minDist = Math.min(...detectedProductRows.map(y => Math.abs(testY - y)));
+                if (minDist < rowSpacingThreshold) {
+                    return false;
+                }
+            }
+            
+            // brand 필드 체크
+            if (!fieldConfigs.brand) return false;
+            
+            const brandConfig = fieldConfigs.brand;
+            const brandExpectedY0 = testY - brandConfig.offset;
+            const brandExpectedY1 = brandExpectedY0 - brandConfig.height;
+            
+            let brandHasText = false;
+            for (const char of charsWithY) {
+                if (brandConfig.x0 <= char.x && char.x <= brandConfig.x1 &&
+                    brandExpectedY1 <= char.y && char.y <= brandExpectedY0) {
+                    brandHasText = true;
+                    break;
+                }
+            }
+            
+            if (!brandHasText) return false;
+            
+            // 모든 필드 체크
+            let matchedFieldsCount = 0;
+            for (const [fieldName, fieldConfig] of Object.entries(fieldConfigs)) {
+                const expectedFieldY0 = testY - fieldConfig.offset;
+                const expectedFieldY1 = expectedFieldY0 - fieldConfig.height;
+                
+                let foundText = false;
+                for (const char of charsWithY) {
+                    if (fieldConfig.x0 <= char.x && char.x <= fieldConfig.x1 &&
+                        expectedFieldY1 <= char.y && char.y <= expectedFieldY0) {
+                        foundText = true;
+                        matchedFieldsCount++;
+                        break;
+                    }
+                }
+                
+                if (!foundText) return false;
+            }
+            
+            return matchedFieldsCount >= Math.min(3, Object.keys(fieldConfigs).length);
+        }
+        
+        function showDetectedProductRow(y) {
+            const viewer = document.getElementById('pdf-viewer');
+            const rowRect = document.createElement('div');
+            rowRect.className = 'product-row-detected';
+            
+            // 제품 행의 높이 계산 (가장 큰 필드 높이 사용)
+            const maxHeight = Math.max(...Object.values(fieldConfigs).map(f => f.height));
+            
+            const canvasY0 = pageViewport.height - ((y / pageViewport.height) * pageViewport.height);
+            const canvasY1 = canvasY0 - maxHeight;
+            
+            rowRect.style.top = Math.min(canvasY0, canvasY1) + 'px';
+            rowRect.style.height = maxHeight + 'px';
+            rowRect.title = `제품 행 감지 (Y=${y.toFixed(2)})`;
+            
+            viewer.appendChild(rowRect);
         }
         
         function extractTextField(chars, bbox) {
