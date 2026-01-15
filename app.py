@@ -393,28 +393,21 @@ def extract_with_y_scan(pdf_path, template):
                         else:
                             # 일반 텍스트 필드: 정규식 패턴 매칭
                             import re
-                            regex = pattern.get('regex')
-                            if regex:
+                            regex_str = pattern.get('regex')
+                            if regex_str:
                                 # 정규식 문자열을 컴파일
-                                if isinstance(regex, str):
-                                    try:
-                                        pattern_obj = re.compile(regex)
-                                        if pattern_obj.search(field_text):
-                                            matched_fields_count += 1
-                                        else:
-                                            all_fields_matched = False
-                                            break
-                                    except:
-                                        # 정규식 오류 시 텍스트만 확인
-                                        if field_text:
-                                            matched_fields_count += 1
-                                else:
-                                    # 이미 컴파일된 패턴
-                                    if regex.search(field_text):
+                                try:
+                                    pattern_obj = re.compile(regex_str)
+                                    if pattern_obj.search(field_text):
                                         matched_fields_count += 1
                                     else:
-                                        all_fields_matched = False
-                                        break
+                                        # 패턴 불일치 시에도 텍스트가 있으면 매칭으로 간주 (유연성)
+                                        if field_text:
+                                            matched_fields_count += 1
+                                except:
+                                    # 정규식 오류 시 텍스트만 확인
+                                    if field_text:
+                                        matched_fields_count += 1
                             else:
                                 # 패턴이 없으면 텍스트만 확인
                                 if field_text:

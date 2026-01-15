@@ -550,9 +550,10 @@ async function saveTemplate() {
             }
         } else {
             // 일반 텍스트 필드의 경우 텍스트 패턴 저장
+            const regex = generateRegexFromText(text);
             field.pattern = {
                 text: text,
-                regex: generateRegexFromText(text)
+                regex: regex ? regex.source : null  // 정규식 객체를 문자열로 변환하여 저장
             };
         }
         
