@@ -64,12 +64,16 @@ def extract_with_y_scan(pdf_path, template):
             # Y 좌표 기준 정렬 (위에서 아래로, 큰 값부터)
             chars_with_js_y.sort(key=lambda c: -c['y'])
             
-            # 제품 행 찾기: 템플릿의 첫 제품 기준 Y 위치와 유사한 위치 찾기
+            # 제품 행 찾기: 템플릿의 첫 제품 기준 Y 위치와 정확히 일치하는 패턴 찾기
             product_row_y_positions = []
-            y_tolerance = 3  # Y 위치 허용 오차 (픽셀)
-            row_spacing_threshold = 20  # 제품 행 간 최소 간격 (픽셀)
+            y_tolerance = 2  # Y 위치 허용 오차 (픽셀) - 더 엄격하게
+            row_spacing_threshold = 30  # 제품 행 간 최소 간격 (픽셀) - 더 크게
             
-            # 각 Y 위치에서 제품 행 패턴 확인
+            # 템플릿의 첫 제품 기준 Y 위치 주변에서만 제품 행 찾기
+            # 실제 제품 행은 첫 제품 기준 Y 위치와 유사한 위치여야 함
+            template_y_range = (first_product_top_js - 5, first_product_top_js + 5)  # 첫 제품 Y ±5픽셀
+            
+            # 각 Y 위치에서 제품 행 패턴 확인 (템플릿 Y 위치와 유사한 위치만)
             unique_y_positions = sorted(set(round(c['y'] / y_tolerance) * y_tolerance for c in chars_with_js_y), reverse=True)
             
             for test_y in unique_y_positions:
@@ -77,8 +81,28 @@ def extract_with_y_scan(pdf_path, template):
                 if product_row_y_positions and min(abs(test_y - py) for py in product_row_y_positions) < row_spacing_threshold:
                     continue
                 
+                # 이 Y 위치가 첫 제품 기준 Y 위치와 유사한 패턴인지 먼저 확인
+                # 첫 제품의 brand 필드 위치 계산
+                brand_expected_y0 = test_y - field_configs['brand']['offset']
+                brand_expected_y1 = brand_expected_y0 - field_configs['brand']['height']
+                
+                # brand 필드 영역에 실제 텍스트가 있는지 확인 (제품 행인지 판단의 기준)
+                brand_x0, brand_x1 = field_configs['brand']['x0'], field_configs['brand']['x1']
+                brand_has_text = False
+                for char_data in chars_with_js_y:
+                    char_y = char_data['y']
+                    char_x = char_data['x']
+                    if (brand_x0 <= char_x <= brand_x1) and (brand_expected_y1 <= char_y <= brand_expected_y0):
+                        brand_has_text = True
+                        break
+                
+                # brand 필드에 텍스트가 없으면 제품 행이 아님
+                if not brand_has_text:
+                    continue
+                
                 # 이 Y 위치가 제품 행인지 확인 (모든 필드 영역에 텍스트가 있어야 함)
                 all_fields_matched = True
+                matched_fields_count = 0
                 for field_name, field_config in field_configs.items():
                     # 이 제품 행에서 필드의 예상 Y 위치 계산
                     expected_field_y0 = test_y - field_config['offset']
@@ -93,14 +117,15 @@ def extract_with_y_scan(pdf_path, template):
                         # expected_field_y0가 위쪽 (큰 값), expected_field_y1이 아래쪽 (작은 값)
                         if (x0 <= char_x <= x1) and (expected_field_y1 <= char_y <= expected_field_y0):
                             found_text = True
+                            matched_fields_count += 1
                             break
                     
                     if not found_text:
                         all_fields_matched = False
                         break
                 
-                # 모든 필드가 매칭되면 제품 행으로 인식
-                if all_fields_matched:
+                # 모든 필드가 매칭되고, 적어도 3개 이상의 필드가 있어야 제품 행으로 인식
+                if all_fields_matched and matched_fields_count >= min(3, len(field_configs)):
                     product_row_y_positions.append(test_y)
             
             # 제품 행별로 데이터 추출
