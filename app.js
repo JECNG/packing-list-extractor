@@ -479,8 +479,8 @@ async function nextPage() {
     }
 }
 
-// 템플릿 저장
-function saveTemplate() {
+// 템플릿 저장 (텍스트 패턴 포함)
+async function saveTemplate() {
     const vendorName = document.getElementById('vendor-name').value.trim();
     if (!vendorName) {
         alert('업체명을 입력해주세요.');
@@ -492,16 +492,79 @@ function saveTemplate() {
         return;
     }
     
-    templates[vendorName] = {
-        fields: highlights.map(h => ({
+    if (!currentPdfDoc) {
+        alert('PDF 파일을 먼저 업로드해주세요.');
+        return;
+    }
+    
+    // 각 필드의 텍스트 패턴 추출
+    const fieldsWithPatterns = await Promise.all(highlights.map(async (h) => {
+        const field = {
             field: h.field,
             bbox: h.bbox,
-            type: h.field === 'size_grid' ? 'table' : 'text'  // 사이즈 그리드는 테이블로 처리
-        }))
+            type: h.field === 'size_grid' ? 'table' : 'text'
+        };
+        
+        // 텍스트 패턴 추출
+        const text = await extractTextFromBbox(currentPdfDoc, h.bbox.page + 1, h.bbox);
+        
+        if (h.field === 'size_grid') {
+            // 사이즈 그리드의 경우 size 행과 qty 행 패턴 추출
+            const page = await currentPdfDoc.getPage(h.bbox.page + 1);
+            const textContent = await page.getTextContent();
+            
+            // 필드 영역 내의 문자 추출
+            const chars = textContent.items.filter(item => {
+                const transform = item.transform;
+                const x = transform[4];
+                const y = transform[5];
+                return x >= h.bbox.x0 && x <= h.bbox.x1 && 
+                       y >= h.bbox.y1 && y <= h.bbox.y0;
+            });
+            
+            // Y 위치별로 그룹화
+            const yGroups = {};
+            chars.forEach(char => {
+                const yRounded = Math.round(char.transform[5]);
+                if (!yGroups[yRounded]) {
+                    yGroups[yRounded] = [];
+                }
+                yGroups[yRounded].push(char);
+            });
+            
+            const sortedY = Object.keys(yGroups).map(k => parseInt(k)).sort((a, b) => b - a);
+            
+            if (sortedY.length >= 2) {
+                // 첫 번째 행 = size 행, 두 번째 행 = qty 행
+                const sizeRow = yGroups[sortedY[0]].sort((a, b) => a.transform[4] - b.transform[4]);
+                const qtyRow = yGroups[sortedY[1]].sort((a, b) => a.transform[4] - b.transform[4]);
+                
+                field.pattern = {
+                    size_row_y: sortedY[0],
+                    qty_row_y: sortedY[1],
+                    size_row_text: sizeRow.map(c => c.str).join(' '),
+                    qty_row_text: qtyRow.map(c => c.str).join(' '),
+                    size_cells: extractCells(sizeRow),
+                    qty_cells: extractCells(qtyRow)
+                };
+            }
+        } else {
+            // 일반 텍스트 필드의 경우 텍스트 패턴 저장
+            field.pattern = {
+                text: text,
+                regex: generateRegexFromText(text)
+            };
+        }
+        
+        return field;
+    }));
+    
+    templates[vendorName] = {
+        fields: fieldsWithPatterns
     };
     
     localStorage.setItem('templates', JSON.stringify(templates));
-    alert(`템플릿 "${vendorName}"이 저장되었습니다!`);
+    alert(`템플릿 "${vendorName}"이 저장되었습니다! (텍스트 패턴 포함)`);
     
     // 초기화
     highlights = [];
@@ -510,6 +573,70 @@ function saveTemplate() {
     document.querySelectorAll('.field-btn').forEach(btn => btn.classList.remove('active'));
     updateTemplatePreview();
     renderHighlights();
+}
+
+// 셀 추출 함수 (사이즈 그리드용)
+function extractCells(chars) {
+    if (!chars || chars.length === 0) return [];
+    
+    const cells = [];
+    let currentCell = [];
+    let prevX = null;
+    const threshold = 15;
+    
+    chars.forEach(char => {
+        const x = char.transform[4];
+        if (prevX !== null && Math.abs(x - prevX) > threshold) {
+            if (currentCell.length > 0) {
+                const text = currentCell.map(c => c.str).join('').trim();
+                if (text) {
+                    const xStart = Math.min(...currentCell.map(c => c.transform[4]));
+                    const xEnd = Math.max(...currentCell.map(c => c.transform[4]));
+                    const xCenter = (xStart + xEnd) / 2;
+                    cells.push({ text, xCenter, xStart, xEnd });
+                }
+                currentCell = [];
+            }
+        }
+        currentCell.push(char);
+        prevX = x;
+    });
+    
+    if (currentCell.length > 0) {
+        const text = currentCell.map(c => c.str).join('').trim();
+        if (text) {
+            const xStart = Math.min(...currentCell.map(c => c.transform[4]));
+            const xEnd = Math.max(...currentCell.map(c => c.transform[4]));
+            const xCenter = (xStart + xEnd) / 2;
+            cells.push({ text, xCenter, xStart, xEnd });
+        }
+    }
+    
+    return cells;
+}
+
+// 텍스트에서 정규식 패턴 생성
+function generateRegexFromText(text) {
+    if (!text) return null;
+    
+    // 숫자, 알파벳, 특수문자 패턴 추출
+    // 예: "S56UI0110" -> /[A-Z]\d+[A-Z]+\d+/ 같은 패턴
+    const cleaned = text.trim();
+    if (cleaned.length === 0) return null;
+    
+    // 간단한 패턴: 알파벳과 숫자 조합
+    const hasLetters = /[A-Za-z]/.test(cleaned);
+    const hasNumbers = /\d/.test(cleaned);
+    
+    if (hasLetters && hasNumbers) {
+        return /[A-Za-z0-9]+/;
+    } else if (hasNumbers) {
+        return /\d+/;
+    } else if (hasLetters) {
+        return /[A-Za-z]+/;
+    }
+    
+    return null;
 }
 
 // PDF.js로 텍스트 추출 (bbox 영역)

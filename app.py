@@ -11,12 +11,13 @@ from collections import defaultdict
 app = Flask(__name__)
 CORS(app)  # 프론트엔드에서 API 호출 허용
 
-def parse_size_grid(field_chars):
+def parse_size_grid(field_chars, pattern=None):
     """
     사이즈 그리드 파싱: size 행과 qty 행을 X 좌표로 매핑
     
     Args:
         field_chars: [(y, x, text), ...] 형식의 문자 데이터
+        pattern: 저장된 패턴 정보 (size_row_y, qty_row_y, size_cells, qty_cells)
         
     Returns:
         dict: {size: qty, ...} 형식의 딕셔너리 또는 None
@@ -37,6 +38,28 @@ def parse_size_grid(field_chars):
     
     if len(sorted_y_positions) < 2:
         return None
+    
+    # 패턴이 있으면 저장된 Y 위치 사용
+    if pattern and 'size_row_y' in pattern and 'qty_row_y' in pattern:
+        size_row_y = pattern['size_row_y']
+        qty_row_y = pattern['qty_row_y']
+        
+        # 저장된 Y 위치와 가장 가까운 실제 Y 위치 찾기
+        size_row_y_actual = min(sorted_y_positions, key=lambda y: abs(y - size_row_y))
+        qty_row_y_actual = min(sorted_y_positions, key=lambda y: abs(y - qty_row_y))
+        
+        if size_row_y_actual in y_groups and qty_row_y_actual in y_groups:
+            # 저장된 셀 패턴 사용
+            size_cells_template = pattern.get('size_cells', [])
+            qty_cells_template = pattern.get('qty_cells', [])
+            
+            if size_cells_template and qty_cells_template:
+                return parse_size_grid_with_pattern(
+                    y_groups[size_row_y_actual], 
+                    y_groups[qty_row_y_actual],
+                    size_cells_template,
+                    qty_cells_template
+                )
     
     # 각 행에서 텍스트 블록 추출 (셀 단위)
     def extract_cells_from_row(row_chars):
@@ -172,6 +195,98 @@ def parse_size_grid(field_chars):
     
     return size_grid_dict if size_grid_dict else None
 
+def parse_size_grid_with_pattern(size_row_chars, qty_row_chars, size_cells_template, qty_cells_template):
+    """
+    저장된 패턴을 사용하여 사이즈 그리드 파싱
+    
+    Args:
+        size_row_chars: size 행의 문자 데이터 [(x, text), ...]
+        qty_row_chars: qty 행의 문자 데이터 [(x, text), ...]
+        size_cells_template: 저장된 size 셀 패턴 [{'text': ..., 'xCenter': ..., ...}, ...]
+        qty_cells_template: 저장된 qty 셀 패턴 [{'text': ..., 'xCenter': ..., ...}, ...]
+        
+    Returns:
+        dict: {size: qty, ...} 형식의 딕셔너리 또는 None
+    """
+    # 실제 셀 추출
+    def extract_cells(row_chars):
+        sorted_chars = sorted(row_chars, key=lambda c: c[0])
+        cells = []
+        current_cell = []
+        prev_x = None
+        threshold = 15
+        
+        for char_x, char_text in sorted_chars:
+            if prev_x is not None and abs(char_x - prev_x) > threshold:
+                if current_cell:
+                    text = ''.join(c[1] for c in current_cell).strip()
+                    if text:
+                        x_start = min(c[0] for c in current_cell)
+                        x_end = max(c[0] for c in current_cell)
+                        x_center = (x_start + x_end) / 2
+                        cells.append({'text': text, 'xCenter': x_center, 'xStart': x_start, 'xEnd': x_end})
+                    current_cell = []
+            current_cell.append((char_x, char_text))
+            prev_x = char_x
+        
+        if current_cell:
+            text = ''.join(c[1] for c in current_cell).strip()
+            if text:
+                x_start = min(c[0] for c in current_cell)
+                x_end = max(c[0] for c in current_cell)
+                x_center = (x_start + x_end) / 2
+                cells.append({'text': text, 'xCenter': x_center, 'xStart': x_start, 'xEnd': x_end})
+        
+        return cells
+    
+    size_cells = extract_cells(size_row_chars)
+    qty_cells = extract_cells(qty_row_chars)
+    
+    # 템플릿 셀과 실제 셀 매핑
+    size_grid_dict = {}
+    
+    for size_cell_template in size_cells_template:
+        template_x_center = size_cell_template.get('xCenter', 0)
+        template_size_text = size_cell_template.get('text', '')
+        
+        # 가장 가까운 실제 size 셀 찾기
+        matched_size_cell = None
+        min_distance = float('inf')
+        
+        for size_cell in size_cells:
+            distance = abs(size_cell['xCenter'] - template_x_center)
+            if distance < min_distance:
+                min_distance = distance
+                matched_size_cell = size_cell
+        
+        if matched_size_cell:
+            size_text = matched_size_cell['text']
+            
+            # 해당 size 셀과 매칭되는 qty 찾기
+            matched_qty = None
+            min_qty_distance = float('inf')
+            
+            for qty_cell_template in qty_cells_template:
+                if abs(qty_cell_template.get('xCenter', 0) - template_x_center) < 20:  # 같은 열
+                    # 실제 qty 셀 찾기
+                    for qty_cell in qty_cells:
+                        qty_distance = abs(qty_cell['xCenter'] - qty_cell_template.get('xCenter', 0))
+                        if qty_distance < min_qty_distance:
+                            min_qty_distance = qty_distance
+                            matched_qty = qty_cell['text']
+            
+            # 수량 추출
+            if matched_qty:
+                import re
+                numbers = re.findall(r'\d+', matched_qty)
+                qty_value = int(numbers[0]) if numbers else 0
+            else:
+                qty_value = 0
+            
+            size_grid_dict[size_text] = qty_value
+    
+    return size_grid_dict if size_grid_dict else None
+
 def extract_with_y_scan(pdf_path, template):
     """
     Y축 스캔 방식으로 반복 제품 추출
@@ -186,7 +301,7 @@ def extract_with_y_scan(pdf_path, template):
     # 템플릿의 첫 제품 기준 Y 위치 계산 (JavaScript 좌표계, 위가 큰값)
     first_product_top_js = max(f['bbox']['y0'] for f in fields_template)
     
-    # 필드 정보 저장 (템플릿 기준)
+    # 필드 정보 저장 (템플릿 기준, 패턴 포함)
     field_configs = {}
     for field_info in fields_template:
         field_name = field_info['field']
@@ -200,7 +315,8 @@ def extract_with_y_scan(pdf_path, template):
             'y0_template': bbox['y0'],  # 템플릿에서의 Y 위치
             'y1_template': bbox['y1'],
             'height': abs(bbox['y0'] - bbox['y1']),
-            'type': field_info.get('type', 'text')
+            'type': field_info.get('type', 'text'),
+            'pattern': field_info.get('pattern')  # 텍스트 패턴 저장
         }
     
     with pdfplumber.open(pdf_path) as pdf:
@@ -242,48 +358,71 @@ def extract_with_y_scan(pdf_path, template):
                 if product_row_y_positions and min(abs(test_y - py) for py in product_row_y_positions) < row_spacing_threshold:
                     continue
                 
-                # 이 Y 위치가 첫 제품 기준 Y 위치와 유사한 패턴인지 먼저 확인
-                # 첫 제품의 brand 필드 위치 계산
-                brand_expected_y0 = test_y - field_configs['brand']['offset']
-                brand_expected_y1 = brand_expected_y0 - field_configs['brand']['height']
-                
-                # brand 필드 영역에 실제 텍스트가 있는지 확인 (제품 행인지 판단의 기준)
-                brand_x0, brand_x1 = field_configs['brand']['x0'], field_configs['brand']['x1']
-                brand_has_text = False
-                for char_data in chars_with_js_y:
-                    char_y = char_data['y']
-                    char_x = char_data['x']
-                    if (brand_x0 <= char_x <= brand_x1) and (brand_expected_y1 <= char_y <= brand_expected_y0):
-                        brand_has_text = True
-                        break
-                
-                # brand 필드에 텍스트가 없으면 제품 행이 아님
-                if not brand_has_text:
-                    continue
-                
-                # 이 Y 위치가 제품 행인지 확인 (모든 필드 영역에 텍스트가 있어야 함)
+                # 이 Y 위치가 제품 행인지 확인 (패턴 매칭 사용)
                 all_fields_matched = True
                 matched_fields_count = 0
+                
                 for field_name, field_config in field_configs.items():
                     # 이 제품 행에서 필드의 예상 Y 위치 계산
                     expected_field_y0 = test_y - field_config['offset']
                     expected_field_y1 = expected_field_y0 - field_config['height']
                     
                     x0, x1 = field_config['x0'], field_config['x1']
-                    # 필드 영역(X AND Y) 내에 텍스트가 있는지 확인
-                    found_text = False
-                    for char_data in chars_with_js_y:
-                        char_y = char_data['y']  # PDF 좌표계 (위가 큰 값)
-                        char_x = char_data['x']
-                        # expected_field_y0가 위쪽 (큰 값), expected_field_y1이 아래쪽 (작은 값)
-                        if (x0 <= char_x <= x1) and (expected_field_y1 <= char_y <= expected_field_y0):
-                            found_text = True
-                            matched_fields_count += 1
-                            break
                     
-                    if not found_text:
+                    # 필드 영역(X AND Y) 내의 텍스트 추출
+                    field_chars = []
+                    for char_data in chars_with_js_y:
+                        char_y = char_data['y']
+                        char_x = char_data['x']
+                        if (x0 <= char_x <= x1) and (expected_field_y1 <= char_y <= expected_field_y0):
+                            field_chars.append(char_data)
+                    
+                    if not field_chars:
                         all_fields_matched = False
                         break
+                    
+                    # 텍스트 추출
+                    field_text = ''.join(c['text'] for c in sorted(field_chars, key=lambda c: (c['y'], c['x']))).strip()
+                    
+                    # 패턴 매칭 (패턴이 있으면 사용)
+                    pattern = field_config.get('pattern')
+                    if pattern:
+                        if field_config['type'] == 'table' and field_name == 'size_grid':
+                            # 사이즈 그리드는 별도 처리 (나중에)
+                            matched_fields_count += 1
+                        else:
+                            # 일반 텍스트 필드: 정규식 패턴 매칭
+                            import re
+                            regex = pattern.get('regex')
+                            if regex:
+                                # 정규식 문자열을 컴파일
+                                if isinstance(regex, str):
+                                    try:
+                                        pattern_obj = re.compile(regex)
+                                        if pattern_obj.search(field_text):
+                                            matched_fields_count += 1
+                                        else:
+                                            all_fields_matched = False
+                                            break
+                                    except:
+                                        # 정규식 오류 시 텍스트만 확인
+                                        if field_text:
+                                            matched_fields_count += 1
+                                else:
+                                    # 이미 컴파일된 패턴
+                                    if regex.search(field_text):
+                                        matched_fields_count += 1
+                                    else:
+                                        all_fields_matched = False
+                                        break
+                            else:
+                                # 패턴이 없으면 텍스트만 확인
+                                if field_text:
+                                    matched_fields_count += 1
+                    else:
+                        # 패턴이 없으면 텍스트만 확인
+                        if field_text:
+                            matched_fields_count += 1
                 
                 # 모든 필드가 매칭되고, 적어도 3개 이상의 필드가 있어야 제품 행으로 인식
                 if all_fields_matched and matched_fields_count >= min(3, len(field_configs)):
@@ -317,7 +456,8 @@ def extract_with_y_scan(pdf_path, template):
                     
                     # 사이즈 그리드 특별 처리
                     if field_name == 'size_grid' and field_config['type'] == 'table':
-                        product_data[field_name] = parse_size_grid(field_chars)
+                        pattern = field_config.get('pattern')
+                        product_data[field_name] = parse_size_grid(field_chars, pattern)
                     else:
                         # 텍스트 추출: 같은 Y 위치의 문자들을 X 좌표 순으로 정렬하여 합치기
                         if field_chars:
