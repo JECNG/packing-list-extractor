@@ -14,6 +14,7 @@ CORS(app)  # 프론트엔드에서 API 호출 허용
 def extract_with_y_scan(pdf_path, template):
     """
     Y축 스캔 방식으로 반복 제품 추출
+    필드 영역(X 범위 AND Y 범위) 내의 텍스트만 정확히 수집
     """
     all_products = []
     fields_template = template.get('fields', [])
@@ -21,20 +22,22 @@ def extract_with_y_scan(pdf_path, template):
     if not fields_template:
         return []
     
-    # 템플릿의 첫 제품 기준 Y 위치 계산 (JavaScript 좌표계)
+    # 템플릿의 첫 제품 기준 Y 위치 계산 (JavaScript 좌표계, 위가 큰값)
     first_product_top_js = max(f['bbox']['y0'] for f in fields_template)
     
-    # 필드들의 상대 Y 위치 계산 (첫 제품 기준)
-    field_offsets = {}
+    # 필드 정보 저장 (템플릿 기준)
+    field_configs = {}
     for field_info in fields_template:
         field_name = field_info['field']
         bbox = field_info['bbox']
-        # 첫 제품의 top에서의 오프셋 (JavaScript 좌표계, 위가 큰값)
+        # 첫 제품의 top에서의 오프셋 (JavaScript 좌표계)
         offset = first_product_top_js - bbox['y0']
-        field_offsets[field_name] = {
+        field_configs[field_name] = {
             'offset': offset,
             'x0': min(bbox['x0'], bbox['x1']),
             'x1': max(bbox['x0'], bbox['x1']),
+            'y0_template': bbox['y0'],  # 템플릿에서의 Y 위치
+            'y1_template': bbox['y1'],
             'height': abs(bbox['y0'] - bbox['y1']),
             'type': field_info.get('type', 'text')
         }
@@ -43,86 +46,85 @@ def extract_with_y_scan(pdf_path, template):
         for page_num, page in enumerate(pdf.pages):
             page_height = page.height
             
-            # 모든 문자 추출
+            # 모든 문자 추출 및 JavaScript 좌표계로 변환
             chars = page.chars
             if not chars:
                 continue
             
-            # Y 좌표 기준 정렬 (pdfplumber: top이 큰 값이 위)
-            # JavaScript 좌표계로 변환: y_js = page_height - top
             chars_with_js_y = []
             for char in chars:
-                y_js = page_height - char['top']  # JavaScript 좌표계로 변환
+                y_js = page_height - char['top']  # JavaScript 좌표계 (위가 큰 값)
                 chars_with_js_y.append({
                     'text': char['text'],
                     'x': char['x0'],
-                    'y_js': y_js,
-                    'top': char['top'],
-                    'bottom': char['bottom'],
-                    'x0': char['x0'],
-                    'x1': char['x1']
+                    'y_js': y_js
                 })
             
             # Y 좌표 기준 정렬 (위에서 아래로)
             chars_with_js_y.sort(key=lambda c: -c['y_js'])
             
-            # 제품 행을 Y 좌표 기준으로 그룹화
-            row_threshold = 15  # 행 간격 threshold (픽셀)
-            product_rows = []
-            current_row = []
-            prev_y = None
+            # 제품 행 찾기: 템플릿의 첫 제품 기준 Y 위치와 유사한 위치 찾기
+            product_row_y_positions = []
+            y_tolerance = 3  # Y 위치 허용 오차 (픽셀)
+            row_spacing_threshold = 20  # 제품 행 간 최소 간격 (픽셀)
             
-            for char_data in chars_with_js_y:
-                char_y = char_data['y_js']
-                char_text = char_data['text'].strip()
-                
-                if not char_text:
+            # 각 Y 위치에서 제품 행 패턴 확인
+            unique_y_positions = sorted(set(round(c['y_js'] / y_tolerance) * y_tolerance for c in chars_with_js_y), reverse=True)
+            
+            for test_y in unique_y_positions:
+                # 이미 추가된 제품 행과 너무 가까우면 스킵
+                if product_row_y_positions and min(abs(test_y - py) for py in product_row_y_positions) < row_spacing_threshold:
                     continue
                 
-                # Y 위치가 크게 변하면 새 행 시작
-                if prev_y is not None and abs(char_y - prev_y) > row_threshold:
-                    if current_row:
-                        product_rows.append(current_row)
-                        current_row = []
-                
-                current_row.append(char_data)
-                prev_y = char_y
-            
-            # 마지막 행 추가
-            if current_row:
-                product_rows.append(current_row)
-            
-            # 각 제품 행에서 필드별로 데이터 추출
-            for row_chars in product_rows:
-                if not row_chars:
-                    continue
-                
-                # 행의 기준 Y 위치 (가장 위쪽 문자)
-                row_base_y = max(c['y_js'] for c in row_chars)
-                
-                # 각 필드별로 Y 범위 계산 및 텍스트 수집
-                product_data = {}
-                for field_name, field_config in field_offsets.items():
-                    # 필드의 Y 범위 계산 (행 기준 Y에서 오프셋 적용)
-                    field_y0 = row_base_y - field_config['offset']  # 필드 상단
-                    field_y1 = field_y0 - field_config['height']    # 필드 하단
+                # 이 Y 위치가 제품 행인지 확인 (각 필드 영역에 텍스트가 있는지 체크)
+                matched_fields = 0
+                for field_name, field_config in field_configs.items():
+                    # 이 제품 행에서 필드의 예상 Y 위치 계산
+                    expected_field_y0 = test_y - field_config['offset']
+                    expected_field_y1 = expected_field_y0 - field_config['height']
                     
                     x0, x1 = field_config['x0'], field_config['x1']
-                    field_texts = []
+                    # 필드 영역(X AND Y) 내에 텍스트가 있는지 확인
+                    for char_data in chars_with_js_y:
+                        char_y = char_data['y_js']
+                        char_x = char_data['x']
+                        if (x0 <= char_x <= x1) and (expected_field_y1 <= char_y <= expected_field_y0):
+                            matched_fields += 1
+                            break
+                
+                # 필드의 절반 이상이 매칭되면 제품 행으로 인식
+                if matched_fields >= len(field_configs) * 0.5:
+                    product_row_y_positions.append(test_y)
+            
+            # 제품 행별로 데이터 추출
+            for product_base_y in sorted(product_row_y_positions, reverse=True):
+                product_data = {}
+                
+                for field_name, field_config in field_configs.items():
+                    # 이 제품 행에서 필드의 Y 위치 계산
+                    field_y0 = product_base_y - field_config['offset']
+                    field_y1 = field_y0 - field_config['height']
+                    
+                    x0, x1 = field_config['x0'], field_config['x1']
                     
                     # 필드 영역(X 범위 AND Y 범위) 내의 문자만 수집
-                    for char_data in row_chars:
+                    field_chars = []
+                    for char_data in chars_with_js_y:
                         char_y = char_data['y_js']
                         char_x = char_data['x']
                         char_text = char_data['text'].strip()
                         
-                        # X 범위와 Y 범위 모두 체크
+                        if not char_text:
+                            continue
+                        
+                        # X 범위와 Y 범위 모두 정확히 체크
                         if (x0 <= char_x <= x1) and (field_y1 <= char_y <= field_y0):
-                            field_texts.append(char_text)
+                            field_chars.append((char_y, char_x, char_text))
                     
-                    # 필드 영역 내 텍스트가 있으면 합치기
-                    if field_texts:
-                        product_data[field_name] = ' '.join(field_texts).strip()
+                    # Y 위치로 정렬 후 텍스트 합치기
+                    if field_chars:
+                        field_chars.sort(key=lambda c: (-c[0], c[1]))  # Y 큰값 먼저, 그 다음 X
+                        product_data[field_name] = ' '.join(c[2] for c in field_chars).strip()
                     else:
                         product_data[field_name] = None
                 
