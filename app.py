@@ -19,7 +19,7 @@ def extract_with_y_scan(pdf_path, template):
     all_products = []
     fields_template = template.get('fields', [])
     
-    if not fields_template:
+    if not fields_template: 
         return []
     
     # 템플릿의 첫 제품 기준 Y 위치 계산 (JavaScript 좌표계, 위가 큰값)
@@ -53,15 +53,16 @@ def extract_with_y_scan(pdf_path, template):
             
             chars_with_js_y = []
             for char in chars:
-                y_js = page_height - char['top']  # JavaScript 좌표계 (위가 큰 값)
+                # pdfplumber의 top은 PDF 좌표계에서 위쪽 값 (큰 값)
+                # 템플릿의 y0, y1도 같은 좌표계를 사용하므로 변환 불필요
                 chars_with_js_y.append({
                     'text': char['text'],
                     'x': char['x0'],
-                    'y_js': y_js
+                    'y': char['top']  # PDF 좌표계 그대로 사용 (위가 큰 값)
                 })
             
-            # Y 좌표 기준 정렬 (위에서 아래로)
-            chars_with_js_y.sort(key=lambda c: -c['y_js'])
+            # Y 좌표 기준 정렬 (위에서 아래로, 큰 값부터)
+            chars_with_js_y.sort(key=lambda c: -c['y'])
             
             # 제품 행 찾기: 템플릿의 첫 제품 기준 Y 위치와 유사한 위치 찾기
             product_row_y_positions = []
@@ -69,7 +70,7 @@ def extract_with_y_scan(pdf_path, template):
             row_spacing_threshold = 20  # 제품 행 간 최소 간격 (픽셀)
             
             # 각 Y 위치에서 제품 행 패턴 확인
-            unique_y_positions = sorted(set(round(c['y_js'] / y_tolerance) * y_tolerance for c in chars_with_js_y), reverse=True)
+            unique_y_positions = sorted(set(round(c['y'] / y_tolerance) * y_tolerance for c in chars_with_js_y), reverse=True)
             
             for test_y in unique_y_positions:
                 # 이미 추가된 제품 행과 너무 가까우면 스킵
@@ -87,8 +88,9 @@ def extract_with_y_scan(pdf_path, template):
                     # 필드 영역(X AND Y) 내에 텍스트가 있는지 확인
                     found_text = False
                     for char_data in chars_with_js_y:
-                        char_y = char_data['y_js']
+                        char_y = char_data['y']  # PDF 좌표계 (위가 큰 값)
                         char_x = char_data['x']
+                        # expected_field_y0가 위쪽 (큰 값), expected_field_y1이 아래쪽 (작은 값)
                         if (x0 <= char_x <= x1) and (expected_field_y1 <= char_y <= expected_field_y0):
                             found_text = True
                             break
@@ -115,7 +117,7 @@ def extract_with_y_scan(pdf_path, template):
                     # 필드 영역(X 범위 AND Y 범위) 내의 문자만 수집
                     field_chars = []
                     for char_data in chars_with_js_y:
-                        char_y = char_data['y_js']
+                        char_y = char_data['y']  # PDF 좌표계 (위가 큰 값)
                         char_x = char_data['x']
                         char_text = char_data['text'].strip()
                         
@@ -123,6 +125,7 @@ def extract_with_y_scan(pdf_path, template):
                             continue
                         
                         # X 범위와 Y 범위 모두 정확히 체크
+                        # field_y0가 위쪽 (큰 값), field_y1이 아래쪽 (작은 값)
                         if (x0 <= char_x <= x1) and (field_y1 <= char_y <= field_y0):
                             field_chars.append((char_y, char_x, char_text))
                     
