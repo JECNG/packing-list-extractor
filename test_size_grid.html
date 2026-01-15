@@ -423,9 +423,17 @@
                 };
             });
             
-            // 유일한 Y 위치 추출
+            // PDF 전체 높이를 기준으로 Y 위치 생성 (맨 위부터 맨 아래까지)
             const yTolerance = 2;
-            uniqueYPositions = [...new Set(charsWithY.map(c => Math.round(c.y / yTolerance) * yTolerance))].sort((a, b) => b - a);
+            // 텍스트가 있는 Y 위치만 사용하지 않고, 페이지 전체를 스캔
+            const minY = Math.min(...charsWithY.map(c => c.y));
+            const maxY = Math.max(...charsWithY.map(c => c.y));
+            
+            // 위에서 아래로 (큰 값부터 작은 값까지) 스캔할 Y 위치 생성
+            uniqueYPositions = [];
+            for (let y = maxY; y >= minY; y -= yTolerance) {
+                uniqueYPositions.push(y);
+            }
             
             detectedProductRows = [];
         }
