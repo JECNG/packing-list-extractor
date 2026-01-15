@@ -28,3 +28,7 @@ env/
 *.temp
 *.log
 
+# Test files
+test_*.html
+test_*.py
+
