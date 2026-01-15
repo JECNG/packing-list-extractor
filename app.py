@@ -154,31 +154,35 @@ def extract_with_y_scan(pdf_path, template):
                         if (x0 <= char_x <= x1) and (field_y1 <= char_y <= field_y0):
                             field_chars.append((char_y, char_x, char_text))
                     
-                    # 텍스트 추출: 같은 Y 위치의 문자들을 X 좌표 순으로 정렬하여 합치기
-                    if field_chars:
-                        # Y 위치별로 그룹화
-                        y_groups = {}
-                        for char_y, char_x, char_text in field_chars:
-                            y_rounded = round(char_y)  # Y 좌표 반올림
-                            if y_rounded not in y_groups:
-                                y_groups[y_rounded] = []
-                            y_groups[y_rounded].append((char_x, char_text))
-                        
-                        # 각 Y 그룹을 처리
-                        text_lines = []
-                        for y_pos in sorted(y_groups.keys(), reverse=True):
-                            chars_in_line = y_groups[y_pos]
-                            chars_in_line.sort(key=lambda c: c[0])  # X 좌표 순 정렬
-                            
-                            # 문자들을 합쳐서 단어 만들기
-                            line_text = ''.join(c[1] for c in chars_in_line).strip()
-                            if line_text:
-                                text_lines.append(line_text)
-                        
-                        # 여러 줄을 공백으로 합치기
-                        product_data[field_name] = ' '.join(text_lines).strip() if text_lines else None
+                    # 사이즈 그리드 특별 처리
+                    if field_name == 'size_grid' and field_config['type'] == 'table':
+                        product_data[field_name] = parse_size_grid(field_chars)
                     else:
-                        product_data[field_name] = None
+                        # 텍스트 추출: 같은 Y 위치의 문자들을 X 좌표 순으로 정렬하여 합치기
+                        if field_chars:
+                            # Y 위치별로 그룹화
+                            y_groups = {}
+                            for char_y, char_x, char_text in field_chars:
+                                y_rounded = round(char_y)  # Y 좌표 반올림
+                                if y_rounded not in y_groups:
+                                    y_groups[y_rounded] = []
+                                y_groups[y_rounded].append((char_x, char_text))
+                            
+                            # 각 Y 그룹을 처리
+                            text_lines = []
+                            for y_pos in sorted(y_groups.keys(), reverse=True):
+                                chars_in_line = y_groups[y_pos]
+                                chars_in_line.sort(key=lambda c: c[0])  # X 좌표 순 정렬
+                                
+                                # 문자들을 합쳐서 단어 만들기
+                                line_text = ''.join(c[1] for c in chars_in_line).strip()
+                                if line_text:
+                                    text_lines.append(line_text)
+                            
+                            # 여러 줄을 공백으로 합치기
+                            product_data[field_name] = ' '.join(text_lines).strip() if text_lines else None
+                        else:
+                            product_data[field_name] = None
                 
                 # 모든 필드가 채워진 경우에만 제품으로 추가
                 if all(v for v in product_data.values() if v):
