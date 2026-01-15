@@ -249,6 +249,7 @@
         let firstProductTopY = 0;
         let charsWithY = [];
         let detectedProductRows = [];
+        let pdfPageHeight = 0; // PDF 실제 페이지 높이 저장
         
         async function loadFiles() {
             const pdfFile = document.getElementById('pdf-file').files[0];
@@ -425,9 +426,9 @@
             
             // PDF 전체 높이를 기준으로 Y 위치 생성 (맨 위부터 맨 아래까지)
             const yTolerance = 2;
-            // PDF 페이지의 실제 높이 가져오기 (PDF.js에서 view 배열 사용)
-            // currentPage.view = [x0, y0, x1, y1] 형식, y1이 페이지 높이
-            const pdfPageHeight = currentPage.view ? currentPage.view[3] : pageViewport.height;
+            // PDF 페이지의 실제 높이 가져오기
+            // PDF.js에서 view 배열: [x0, y0, x1, y1] 형식
+            pdfPageHeight = currentPage.view ? currentPage.view[3] : (currentPage._pageInfo ? currentPage._pageInfo.view[3] : pageViewport.height);
             
             // 텍스트가 있는 최소 Y 위치 찾기
             const textYPositions = charsWithY.map(c => c.y);
@@ -473,8 +474,11 @@
                 
                 const testY = uniqueYPositions[i];
                 
-                // 스캔 라인 이동
-                const canvasY = pageViewport.height - ((testY / pageViewport.height) * pageViewport.height);
+                // 스캔 라인 이동 (PDF 좌표계를 Canvas 좌표계로 변환)
+                // PDF 좌표계: 위가 큰 값, 아래가 작은 값
+                // Canvas 좌표계: 위가 작은 값(0), 아래가 큰 값
+                // 변환 공식: canvasY = (pageViewport.height / pdfPageHeight) * (pdfPageHeight - testY)
+                const canvasY = (pageViewport.height / pdfPageHeight) * (pdfPageHeight - testY);
                 scanLine.style.top = canvasY + 'px';
                 
                 await sleep(100 / animationSpeed);
